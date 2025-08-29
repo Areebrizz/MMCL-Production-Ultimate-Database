@@ -4,442 +4,243 @@ from supabase import create_client
 from datetime import datetime, timedelta
 import time
 import jwt
-import warnings
-import pytz
 import hashlib
 import secrets
-from functools import wraps
 
-warnings.filterwarnings('ignore')
-
-# -------------------------
-# Page Config
-# -------------------------
+# Force clear cache and show version
+APP_VERSION = "1.0"
 st.set_page_config(
-    page_title="MMCL Production Intelligence Platform",
+    page_title="MMCL Production Platform",
     page_icon="🏭",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# -------------------------
-# Enhanced Configuration
-# -------------------------
-class EnhancedConfig:
-    def __init__(self):
-        secrets_dict = st.secrets if hasattr(st, "secrets") else {}
-        self.SECRET_KEY = secrets_dict.get("SECRET_KEY", "mmcl-production-secret-key-2024")
-        self.PASSWORD_EXPIRY_DAYS = 90
-        self.SESSION_TIMEOUT_MINUTES = 60
-        self.SUPABASE_URL = secrets_dict.get("SUPABASE_URL")
-        self.SUPABASE_KEY = secrets_dict.get("SUPABASE_KEY")
-        
-config = EnhancedConfig()
+# Show version for debugging
+st.sidebar.write(f"🚀 App Version: {APP_VERSION}")
+st.sidebar.write(f"📅 Loaded: {datetime.now().strftime('%H:%M:%S')}")
 
-# -------------------------
-# Supabase Connection
-# -------------------------
-@st.cache_resource
+# Configuration
+class AppConfig:
+    def __init__(self):
+        self.SECRET_KEY = st.secrets.get("SECRET_KEY", "dev-secret-key-2024")
+        self.SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+        self.SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
+
+config = AppConfig()
+
+# Database connection
 def init_connection():
     if not config.SUPABASE_URL or not config.SUPABASE_KEY:
-        st.error("Supabase credentials not found. Please check your secrets.toml")
+        st.error("Missing Supabase credentials")
         return None
     try:
-        client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
-        # Simple connection test
-        client.table("users").select("count", count="exact").limit(1).execute()
-        return client
+        return create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
     except Exception as e:
-        st.error(f"Database connection failed: {e}")
+        st.error(f"Connection failed: {e}")
         return None
 
 supabase = init_connection()
 
-# -------------------------
-# Error Handling
-# -------------------------
-def handle_database_errors(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            st.error(f"Database operation failed: {str(e)}")
-            return None
-    return wrapper
-
-# -------------------------
-# Password Utilities
-# -------------------------
+# Password utilities
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
-    hash_obj = hashlib.sha256((password + salt).encode())
-    return f"{salt}${hash_obj.hexdigest()}"
+    return f"{salt}${hashlib.sha256((password + salt).encode()).hexdigest()}"
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+def verify_password(plain: str, hashed: str) -> bool:
     try:
-        if not hashed_password or '$' not in hashed_password:
-            return False
-        salt, stored_hash = hashed_password.split('$')
-        hash_obj = hashlib.sha256((plain_password + salt).encode())
-        return hash_obj.hexdigest() == stored_hash
+        salt, stored_hash = hashed.split('$')
+        return hashlib.sha256((plain + salt).encode()).hexdigest() == stored_hash
     except:
         return False
 
-def check_password_strength(password: str) -> int:
-    strength = 0
-    if len(password) >= 8:  # Reduced from 12 for better UX
-        strength += 1
-    if any(c.isupper() for c in password) and any(c.islower() for c in password):
-        strength += 1
-    if any(c.isdigit() for c in password):
-        strength += 1
-    return strength
+def check_password_strength(password: str) -> bool:
+    return (len(password) >= 8 and 
+            any(c.isupper() for c in password) and 
+            any(c.isdigit() for c in password))
 
-def validate_username(username: str) -> bool:
-    return 3 <= len(username) <= 20 and username.isalnum()
-
-def is_password_expired(password_changed_date: str) -> bool:
-    if not password_changed_date:
-        return True
+# Database operations
+def get_user(username: str):
+    if not supabase: return None
     try:
-        change_date = datetime.fromisoformat(password_changed_date.replace('Z', '+00:00'))
-        expiry_date = change_date + timedelta(days=config.PASSWORD_EXPIRY_DAYS)
-        return datetime.utcnow() > expiry_date
+        response = supabase.table("users").select("*").eq("username", username).execute()
+        return response.data[0] if response.data else None
     except:
-        return True
+        return None
 
-# -------------------------
-# JWT Token
-# -------------------------
-def generate_jwt_token(user_data: dict) -> str:
-    payload = {
-        "user_id": user_data["id"],
-        "username": user_data["username"],
-        "role": user_data["role"],
-        "department": user_data.get("department"),
-        "exp": datetime.utcnow() + timedelta(hours=24)
-    }
-    return jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
+def create_user(username, password, role="viewer", approved=False, department=None, email=None):
+    if not supabase: return None
+    try:
+        user_data = {
+            "username": username,
+            "password": hash_password(password),
+            "role": role,
+            "approved": approved,
+            "department": department,
+            "email": email,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        response = supabase.table("users").insert(user_data).execute()
+        return response.data[0] if response.data else None
+    except:
+        return None
 
-# -------------------------
-# Session State
-# -------------------------
-if "authenticated" not in st.session_state:
+def save_production_data(data):
+    if not supabase: return False
+    try:
+        response = supabase.table("production_metrics").insert(data).execute()
+        return bool(response.data)
+    except:
+        return False
+
+def get_production_data(department=None, days=7):
+    if not supabase: return pd.DataFrame()
+    try:
+        query = supabase.table("production_metrics").select("*")
+        if department and department != "All":
+            query = query.eq("department", department)
+        response = query.execute()
+        return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    except:
+        return pd.DataFrame()
+
+# Session state
+if "auth" not in st.session_state:
     st.session_state.update({
         "authenticated": False,
         "username": None,
         "role": None,
         "user_id": None,
-        "department": None,
-        "last_activity": datetime.now().isoformat(),
-        "password_change_required": False
+        "department": None
     })
 
-# -------------------------
-# Database Operations
-# -------------------------
-@handle_database_errors
-def get_user(username: str) -> dict:
-    if not supabase:
-        return None
-    response = supabase.table("users").select("*").eq("username", username).execute()
-    return response.data[0] if response.data else None
+# Setup admin user
+def setup_admin():
+    if not get_user("admin"):
+        create_user("admin", "Admin123!", "admin", True, "System", "admin@mmcl.com")
 
-@handle_database_errors
-def create_user(username: str, password: str, role: str = "viewer", approved: bool = False, department: str = None, email: str = None) -> dict:
-    if not supabase:
-        return None
-    hashed_password = hash_password(password)
-    user_data = {
-        "username": username,
-        "password": hashed_password,
-        "role": role,
-        "approved": approved,
-        "department": department,
-        "email": email,
-        "created_at": datetime.utcnow().isoformat(),
-        "password_changed_at": datetime.utcnow().isoformat()
-    }
-    response = supabase.table("users").insert(user_data).execute()
-    return response.data[0] if response.data else None
-
-@handle_database_errors
-def update_password(user_id: str, new_password: str) -> bool:
-    if not supabase:
-        return False
-    hashed_password = hash_password(new_password)
-    response = supabase.table("users").update({
-        "password": hashed_password,
-        "password_changed_at": datetime.utcnow().isoformat()
-    }).eq("id", user_id).execute()
-    return bool(response.data)
-
-@handle_database_errors
-def save_production_data(data: dict) -> bool:
-    if not supabase:
-        return False
-    response = supabase.table("production_metrics").insert(data).execute()
-    return bool(response.data)
-
-@handle_database_errors
-def get_production_data(department: str = None, start_date: str = None, end_date: str = None):
-    if not supabase:
-        return pd.DataFrame()
+# Authentication pages
+def login_page():
+    st.title("🔐 MMCL Production Login")
     
-    query = supabase.table("production_metrics").select("*")
-    
-    if department and department != "All":
-        query = query.eq("department", department)
-    if start_date:
-        query = query.gte("date", start_date)
-    if end_date:
-        query = query.lte("date", end_date)
-    
-    response = query.execute()
-    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
-
-# -------------------------
-# Admin Setup
-# -------------------------
-GOD_ADMIN_USERNAME = "admin"
-GOD_ADMIN_PASSWORD = "Admin@12345!"
-
-def setup_god_admin():
-    admin_user = get_user(GOD_ADMIN_USERNAME)
-    if not admin_user:
-        result = create_user(GOD_ADMIN_USERNAME, GOD_ADMIN_PASSWORD, "admin", True, "System", "admin@mmcl.com")
-        if result:
-            st.sidebar.success("Admin account created")
-
-# -------------------------
-# Authentication Pages
-# -------------------------
-def auth_page():
-    tab1, tab2 = st.tabs(["🔐 Login", "📝 Register"])
-    
-    with tab1:
-        st.header("Login")
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Login")
-            
-            if submitted:
-                user = get_user(username)
-                if not user:
-                    st.error("User not found")
-                    return
-                if not verify_password(password, user["password"]):
-                    st.error("Invalid password")
-                    return
-                if not user["approved"]:
-                    st.error("Account pending approval")
-                    return
-                
+    with st.form("login"):
+        user = st.text_input("Username")
+        pwd = st.text_input("Password", type="password")
+        
+        if st.form_submit_button("Login"):
+            user_data = get_user(user)
+            if user_data and verify_password(pwd, user_data["password"]) and user_data["approved"]:
                 st.session_state.update({
                     "authenticated": True,
-                    "username": user["username"],
-                    "role": user["role"],
-                    "user_id": user["id"],
-                    "department": user.get("department"),
-                    "password_change_required": is_password_expired(user.get("password_changed_at"))
+                    "username": user_data["username"],
+                    "role": user_data["role"],
+                    "user_id": user_data["id"],
+                    "department": user_data.get("department")
                 })
                 st.success("Login successful!")
                 time.sleep(1)
                 st.rerun()
-    
-    with tab2:
-        st.header("Register")
-        with st.form("register_form"):
-            new_username = st.text_input("Username")
-            new_password = st.text_input("Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            department = st.selectbox("Department", ["Assembly Shop", "Paint Shop", "Weld Shop", "QAHSE", "PDI"])
-            email = st.text_input("Email")
-            
-            submitted = st.form_submit_button("Create Account")
-            
-            if submitted:
-                if not validate_username(new_username):
-                    st.error("Invalid username format")
-                elif new_password != confirm_password:
-                    st.error("Passwords don't match")
-                elif check_password_strength(new_password) < 2:
-                    st.error("Password too weak")
-                elif get_user(new_username):
-                    st.error("Username exists")
-                else:
-                    user = create_user(new_username, new_password, "viewer", False, department, email)
-                    if user:
-                        st.success("Account created! Waiting for approval.")
-                    else:
-                        st.error("Creation failed")
+            else:
+                st.error("Invalid credentials or account not approved")
 
-# -------------------------
-# Production Entry Page
-# -------------------------
-def production_entry_page():
-    st.header(f"Production Entry - {st.session_state.department}")
+def register_page():
+    st.title("📝 Create Account")
     
-    with st.form("production_form"):
-        col1, col2 = st.columns(2)
+    with st.form("register"):
+        user = st.text_input("Username (3-20 chars)")
+        pwd = st.text_input("Password", type="password")
+        confirm = st.text_input("Confirm Password", type="password")
+        dept = st.selectbox("Department", ["Assembly Shop", "Paint Shop", "Weld Shop", "QAHSE", "PDI"])
+        email = st.text_input("Email")
         
-        with col1:
-            date = st.date_input("Date", datetime.now())
-            shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
-            manpower = st.number_input("Manpower", min_value=0, value=10)
-        
-        with col2:
-            planned = st.number_input("Planned Production", min_value=0, value=100)
-            actual = st.number_input("Actual Production", min_value=0, value=95)
-            scrap = st.number_input("Scrap Quantity", min_value=0, value=2)
-        
-        downtime = st.number_input("Downtime Hours", min_value=0.0, value=0.5, step=0.1)
+        if st.form_submit_button("Register"):
+            if not user or len(user) < 3:
+                st.error("Username too short")
+            elif pwd != confirm:
+                st.error("Passwords don't match")
+            elif not check_password_strength(pwd):
+                st.error("Password needs 8+ chars, uppercase, and number")
+            elif get_user(user):
+                st.error("Username exists")
+            else:
+                if create_user(user, pwd, "viewer", False, dept, email):
+                    st.success("Account created! Awaiting approval.")
+                else:
+                    st.error("Registration failed")
+
+# Main app pages
+def production_page():
+    st.title("🏭 Production Entry")
+    
+    with st.form("production"):
+        date = st.date_input("Date", datetime.now())
+        shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
+        planned = st.number_input("Planned Units", min_value=0, value=100)
+        actual = st.number_input("Actual Units", min_value=0, value=95)
+        scrap = st.number_input("Scrap Units", min_value=0, value=3)
         notes = st.text_area("Notes")
         
-        submitted = st.form_submit_button("Save Record")
-        
-        if submitted:
+        if st.form_submit_button("💾 Save"):
             data = {
                 "date": date.isoformat(),
                 "shift": shift,
-                "manpower_available": manpower,
                 "production_plan": planned,
                 "production_actual": actual,
                 "scrap": scrap,
-                "downtime_hours": downtime,
                 "notes": notes,
                 "entered_by": st.session_state.username,
                 "department": st.session_state.department,
                 "availability": 95.0,
-                "performance": 98.0,
-                "quality": 97.0,
+                "performance": (actual/planned*100 if planned > 0 else 0),
+                "quality": ((actual-scrap)/actual*100 if actual > 0 else 0),
                 "oee_score": 90.0
             }
             
             if save_production_data(data):
-                st.success("Production data saved!")
+                st.success("Data saved!")
             else:
-                st.error("Failed to save data")
+                st.error("Save failed")
 
-# -------------------------
-# Dashboard Page
-# -------------------------
 def dashboard_page():
-    st.header("Production Dashboard")
+    st.title("📊 Production Dashboard")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("Start Date", datetime.now() - timedelta(days=7))
-    with col2:
-        end_date = st.date_input("End Date", datetime.now())
-    
-    department = st.selectbox("Department", ["All", "Assembly Shop", "Paint Shop", "Weld Shop", "QAHSE", "PDI"])
-    
-    data = get_production_data(
-        department if department != "All" else None,
-        start_date.isoformat(),
-        end_date.isoformat()
-    )
+    dept = st.selectbox("Filter Department", ["All", "Assembly Shop", "Paint Shop", "Weld Shop"])
+    data = get_production_data(dept if dept != "All" else None)
     
     if not data.empty:
         st.metric("Total Records", len(data))
         st.metric("Average OEE", f"{data['oee_score'].mean():.1f}%")
         
-        st.subheader("Recent Production")
         st.dataframe(data[['date', 'shift', 'production_actual', 'oee_score']].tail(10))
     else:
         st.info("No production data found")
 
-# -------------------------
-# Profile Page
-# -------------------------
-def profile_page():
-    st.header("User Profile")
-    
-    user = get_user(st.session_state.username)
-    if not user:
-        st.error("User not found")
-        return
-    
-    st.info(f"**Username:** {user['username']}")
-    st.info(f"**Role:** {user['role']}")
-    st.info(f"**Department:** {user.get('department', 'None')}")
-    st.info(f"**Status:** {'Approved' if user['approved'] else 'Pending'}")
-    
-    if st.session_state.password_change_required:
-        st.warning("Your password needs to be changed")
-        
-        with st.form("change_password"):
-            current = st.text_input("Current Password", type="password")
-            new = st.text_input("New Password", type="password")
-            confirm = st.text_input("Confirm Password", type="password")
-            
-            if st.form_submit_button("Change Password"):
-                if not verify_password(current, user["password"]):
-                    st.error("Current password incorrect")
-                elif new != confirm:
-                    st.error("New passwords don't match")
-                elif check_password_strength(new) < 2:
-                    st.error("Password too weak")
-                elif update_password(st.session_state.user_id, new):
-                    st.session_state.password_change_required = False
-                    st.success("Password updated!")
-                    st.rerun()
-                else:
-                    st.error("Password update failed")
-
-# -------------------------
-# Navigation & Main App
-# -------------------------
-def main_app():
-    st.sidebar.title("🏭 MMCL Production")
-    st.sidebar.write(f"Welcome, **{st.session_state.username}**")
-    st.sidebar.write(f"*{st.session_state.role} - {st.session_state.department}*")
-    st.sidebar.divider()
-    
-    pages = ["📊 Dashboard", "🏭 Production Entry", "👤 Profile"]
-    if st.session_state.role == "admin":
-        pages.append("⚙️ Admin")
-    
-    page = st.sidebar.radio("Navigation", pages)
-    
-    if st.sidebar.button("🚪 Logout"):
-        st.session_state.clear()
-        st.rerun()
-    
-    # Page routing
-    if page == "📊 Dashboard":
-        dashboard_page()
-    elif page == "🏭 Production Entry":
-        production_entry_page()
-    elif page == "👤 Profile":
-        profile_page()
-    elif page == "⚙️ Admin":
-        st.header("Admin Panel")
-        st.info("Admin features coming soon")
-
-def check_session_timeout():
-    try:
-        last_activity = datetime.fromisoformat(st.session_state.last_activity)
-        return (datetime.now() - last_activity).total_seconds() > config.SESSION_TIMEOUT_MINUTES * 60
-    except:
-        return False
-
+# Main app
 def main():
-    setup_god_admin()
+    setup_admin()
     
     if not st.session_state.authenticated:
-        auth_page()
+        tab1, tab2 = st.tabs(["Login", "Register"])
+        with tab1: login_page()
+        with tab2: register_page()
     else:
-        if check_session_timeout():
-            st.warning("Session expired")
+        st.sidebar.title(f"Welcome, {st.session_state.username}")
+        st.sidebar.write(f"Role: {st.session_state.role}")
+        st.sidebar.write(f"Department: {st.session_state.department}")
+        
+        pages = ["Dashboard", "Production Entry"]
+        if st.session_state.role == "admin":
+            pages.append("Admin")
+        
+        page = st.sidebar.selectbox("Navigation", pages)
+        
+        if st.sidebar.button("Logout"):
             st.session_state.clear()
             st.rerun()
-        else:
-            st.session_state.last_activity = datetime.now().isoformat()
-            main_app()
+        
+        if page == "Dashboard": dashboard_page()
+        elif page == "Production Entry": production_page()
+        elif page == "Admin": st.title("Admin Panel - Coming Soon")
 
 if __name__ == "__main__":
     main()
