@@ -3,7 +3,6 @@ from supabase import create_client, Client
 import pandas as pd
 import bcrypt
 from datetime import datetime, timedelta
-import os
 
 # ------------------------
 # CONFIG
@@ -47,6 +46,31 @@ def auto_logout_check():
             st.rerun()
 
 # ------------------------
+# INIT GOD ADMIN
+# ------------------------
+def init_god_admin():
+    """Ensure god_admin exists in Supabase and stays in sync with st.secrets"""
+    res = supabase.table("users").select("*").eq("username", "god_admin").execute()
+
+    if not res.data:
+        hashed = hash_password(GOD_ADMIN_PASSWORD)
+        supabase.table("users").insert({
+            "username": "god_admin",
+            "password_hash": hashed,
+            "role": "god_admin",
+            "is_online": False
+        }).execute()
+        st.info("👑 God Admin account created in Supabase.")
+    else:
+        # Sync password if changed in secrets
+        current_hash = res.data[0]["password_hash"]
+        if not check_password(GOD_ADMIN_PASSWORD, current_hash):
+            supabase.table("users").update({
+                "password_hash": hash_password(GOD_ADMIN_PASSWORD)
+            }).eq("username", "god_admin").execute()
+            st.warning("🔄 God Admin password updated in Supabase.")
+
+# ------------------------
 # AUTH
 # ------------------------
 def auth_page():
@@ -59,7 +83,12 @@ def auth_page():
         new_pass = st.text_input("Password", type="password")
         if st.button("Create Account"):
             hashed = hash_password(new_pass)
-            supabase.table("users").insert({"username": new_user, "password_hash": hashed, "role": "operator"}).execute()
+            supabase.table("users").insert({
+                "username": new_user,
+                "password_hash": hashed,
+                "role": "operator",
+                "is_online": False
+            }).execute()
             st.success("✅ Account created successfully!")
 
     elif choice == "Login":
@@ -76,11 +105,6 @@ def auth_page():
                 log_action(st.session_state.user_id, "Login")
                 st.success("✅ Logged in successfully!")
                 st.rerun()
-            elif user == "god_admin" and pw == GOD_ADMIN_PASSWORD:
-                st.session_state.role = "god_admin"
-                st.session_state.username = "god_admin"
-                st.success("✅ God Admin access granted")
-                st.rerun()
             else:
                 st.error("❌ Invalid credentials")
 
@@ -88,7 +112,11 @@ def auth_page():
         user = st.text_input("Username")
         req_role = st.selectbox("Request role", ["quality", "supervisor", "admin"])
         if st.button("Submit"):
-            supabase.table("access_requests").insert({"username": user, "requested_role": req_role}).execute()
+            supabase.table("access_requests").insert({
+                "username": user,
+                "requested_role": req_role,
+                "status": "pending"
+            }).execute()
             st.success("✅ Request submitted")
 
     elif choice == "Request Password Change":
@@ -96,7 +124,11 @@ def auth_page():
         new_pw = st.text_input("New Password", type="password")
         if st.button("Submit"):
             hashed = hash_password(new_pw)
-            supabase.table("password_requests").insert({"username": user, "new_password_hash": hashed}).execute()
+            supabase.table("password_requests").insert({
+                "username": user,
+                "new_password_hash": hashed,
+                "status": "pending"
+            }).execute()
             st.success("✅ Password change request submitted")
 
 # ------------------------
@@ -111,7 +143,6 @@ def dashboard_page():
     with col2:
         end_date = st.date_input("End date", datetime.today())
 
-    # Query only filtered data
     prod = supabase.table("production_metrics").select("*")\
         .gte("date", str(start_date)).lte("date", str(end_date)).execute()
     qual = supabase.table("quality_metrics").select("*")\
@@ -178,7 +209,7 @@ def admin_page():
     reqs = supabase.table("access_requests").select("*").eq("status", "pending").execute()
     for r in reqs.data:
         st.write(r)
-        if st.button(f"Approve {r['username']}", key=r['id']):
+        if st.button(f"Approve {r['username']}", key=f"role-{r['id']}"):
             supabase.table("users").update({"role": r["requested_role"]}).eq("username", r["username"]).execute()
             supabase.table("access_requests").update({"status": "approved"}).eq("id", r["id"]).execute()
             st.success(f"✅ {r['username']} promoted to {r['requested_role']}")
@@ -187,7 +218,7 @@ def admin_page():
     preqs = supabase.table("password_requests").select("*").eq("status", "pending").execute()
     for r in preqs.data:
         st.write(r)
-        if st.button(f"Approve password for {r['username']}", key=r['id']):
+        if st.button(f"Approve password for {r['username']}", key=f"pw-{r['id']}"):
             supabase.table("users").update({"password_hash": r["new_password_hash"]}).eq("username", r["username"]).execute()
             supabase.table("password_requests").update({"status": "approved"}).eq("id", r["id"]).execute()
             st.success(f"✅ Password updated for {r['username']}")
@@ -212,8 +243,9 @@ def main():
 
     st.sidebar.title(f"Welcome, {st.session_state.username}")
     if st.sidebar.button("Logout"):
-        set_user_online_status(st.session_state.user_id, False)
-        log_action(st.session_state.user_id, "Logout")
+        if "user_id" in st.session_state:
+            set_user_online_status(st.session_state.user_id, False)
+            log_action(st.session_state.user_id, "Logout")
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
@@ -233,4 +265,5 @@ def main():
         st.error("Unknown role")
 
 if __name__ == "__main__":
+    init_god_admin()  # auto-create or update god_admin
     main()
