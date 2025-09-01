@@ -578,6 +578,71 @@ def profile_page():
         st.error("User not found!")
 
 # -------------------------
+# OEE Calculation Functions
+# -------------------------
+def calculate_oee(record):
+    """
+    Calculate OEE based on production record
+    """
+    try:
+        # Availability = Actual Production Time / Planned Production Time
+        # Assuming 8 hours per shift as planned production time
+        planned_hours = 8
+        actual_hours = planned_hours - record.get('downtime_hours', 0)
+        availability = (actual_hours / planned_hours) * 100 if planned_hours > 0 else 0
+        
+        # Performance = (Actual Output / Ideal Output) * 100
+        # Ideal output based on production plan
+        performance = (record.get('production_actual', 0) / record.get('production_plan', 1)) * 100 if record.get('production_plan', 0) > 0 else 0
+        
+        # Quality = Good Units / Total Units
+        total_units = record.get('production_actual', 0)
+        good_units = total_units - record.get('scrap', 0)
+        quality = (good_units / total_units) * 100 if total_units > 0 else 0
+        
+        # Overall OEE
+        oee = (availability/100) * (performance/100) * (quality/100) * 100
+        
+        return {
+            'availability': round(availability, 1),
+            'performance': round(performance, 1),
+            'quality': round(quality, 1),
+            'oee': round(oee, 1)
+        }
+    except:
+        return {'availability': 0, 'performance': 0, 'quality': 0, 'oee': 0}
+
+def calculate_daily_oee(records):
+    """
+    Calculate weighted average OEE for multiple records (daily view)
+    """
+    if not records:
+        return {'availability': 0, 'performance': 0, 'quality': 0, 'oee': 0}
+    
+    total_planned_hours = len(records) * 8  # 8 hours per shift
+    total_actual_hours = total_planned_hours - sum(record.get('downtime_hours', 0) for record in records)
+    
+    # Weighted averages
+    availability = (total_actual_hours / total_planned_hours) * 100 if total_planned_hours > 0 else 0
+    
+    total_planned = sum(record.get('production_plan', 0) for record in records)
+    total_actual = sum(record.get('production_actual', 0) for record in records)
+    performance = (total_actual / total_planned) * 100 if total_planned > 0 else 0
+    
+    total_units = total_actual
+    good_units = total_units - sum(record.get('scrap', 0) for record in records)
+    quality = (good_units / total_units) * 100 if total_units > 0 else 0
+    
+    oee = (availability/100) * (performance/100) * (quality/100) * 100
+    
+    return {
+        'availability': round(availability, 1),
+        'performance': round(performance, 1),
+        'quality': round(quality, 1),
+        'oee': round(oee, 1)
+    }
+
+# -------------------------
 # Dashboard Page (Enhanced with OEE Analytics)
 # -------------------------
 def dashboard_page():
