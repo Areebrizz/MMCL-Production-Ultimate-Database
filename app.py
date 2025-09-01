@@ -1,52 +1,236 @@
--- USERS TABLE
-create table if not exists users (
-    id uuid primary key default gen_random_uuid(),
-    username text unique not null,
-    password_hash text not null, -- bcrypt hash, no plain text
-    role text check (role in ('operator','quality','admin','god_admin')) not null,
-    created_at timestamp default now(),
-    is_online boolean default false
-);
+import streamlit as st
+from supabase import create_client, Client
+import pandas as pd
+import bcrypt
+from datetime import datetime, timedelta
+import os
 
--- PRODUCTION METRICS
-create table if not exists production_metrics (
-    id uuid primary key default gen_random_uuid(),
-    user_id uuid references users(id) on delete cascade,
-    shift text check (shift in ('Morning','Evening','Night')) not null,
-    date date not null,
-    units_produced int not null check (units_produced >= 0),
-    defects int not null check (defects >= 0),
-    created_at timestamp default now()
-);
+# ------------------------
+# CONFIG
+# ------------------------
+st.set_page_config(page_title="Production Dashboard", layout="wide")
 
--- QUALITY METRICS
-create table if not exists quality_metrics (
-    id uuid primary key default gen_random_uuid(),
-    user_id uuid references users(id) on delete cascade,
-    shift text check (shift in ('Morning','Evening','Night')) not null,
-    date date not null,
-    defect_type text not null,
-    count int not null check (count >= 0),
-    created_at timestamp default now()
-);
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
--- ACCESS REQUESTS (separated for role & password)
-create table if not exists access_requests (
-    id uuid primary key default gen_random_uuid(),
-    user_id uuid references users(id) on delete cascade,
-    request_type text check (request_type in ('role_change','password_reset')) not null,
-    requested_role text check (requested_role in ('operator','quality','admin','god_admin','none')) default 'none',
-    new_password_hash text, -- only used for password reset
-    status text check (status in ('pending','approved','rejected')) default 'pending',
-    created_at timestamp default now()
-);
+GOD_ADMIN_PASSWORD = st.secrets["GOD_ADMIN_PASSWORD"]  # stored in st.secrets, not hardcoded
+MAX_IDLE_MINUTES = 30
 
--- AUDIT LOGS
-create table if not exists audit_logs (
-    id uuid primary key default gen_random_uuid(),
-    user_id uuid references users(id) on delete set null,
-    action text not null,
-    details jsonb,
-    ip_address text,
-    created_at timestamp default now()
-);
+# ------------------------
+# HELPERS
+# ------------------------
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def check_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed.encode())
+
+def log_action(user_id, action, ip="N/A"):
+    supabase.table("audit_logs").insert({
+        "user_id": user_id,
+        "action": action,
+        "ip_address": ip
+    }).execute()
+
+def set_user_online_status(user_id, status: bool):
+    supabase.table("users").update({"is_online": status}).eq("id", user_id).execute()
+
+def auto_logout_check():
+    if "last_activity" in st.session_state:
+        idle_time = datetime.utcnow() - datetime.fromisoformat(st.session_state.last_activity)
+        if idle_time > timedelta(minutes=MAX_IDLE_MINUTES):
+            set_user_online_status(st.session_state.user_id, False)
+            st.warning("You were logged out due to inactivity.")
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+
+# ------------------------
+# AUTH
+# ------------------------
+def auth_page():
+    st.title("🔑 Login")
+
+    choice = st.radio("Choose option", ["Login", "Sign Up", "Request Role Change", "Request Password Change"])
+
+    if choice == "Sign Up":
+        new_user = st.text_input("Username")
+        new_pass = st.text_input("Password", type="password")
+        if st.button("Create Account"):
+            hashed = hash_password(new_pass)
+            supabase.table("users").insert({"username": new_user, "password_hash": hashed, "role": "operator"}).execute()
+            st.success("✅ Account created successfully!")
+
+    elif choice == "Login":
+        user = st.text_input("Username")
+        pw = st.text_input("Password", type="password")
+        if st.button("Login"):
+            res = supabase.table("users").select("*").eq("username", user).execute()
+            if res.data and check_password(pw, res.data[0]["password_hash"]):
+                st.session_state.user_id = res.data[0]["id"]
+                st.session_state.username = res.data[0]["username"]
+                st.session_state.role = res.data[0]["role"]
+                st.session_state.last_activity = datetime.utcnow().isoformat()
+                set_user_online_status(st.session_state.user_id, True)
+                log_action(st.session_state.user_id, "Login")
+                st.success("✅ Logged in successfully!")
+                st.rerun()
+            elif user == "god_admin" and pw == GOD_ADMIN_PASSWORD:
+                st.session_state.role = "god_admin"
+                st.session_state.username = "god_admin"
+                st.success("✅ God Admin access granted")
+                st.rerun()
+            else:
+                st.error("❌ Invalid credentials")
+
+    elif choice == "Request Role Change":
+        user = st.text_input("Username")
+        req_role = st.selectbox("Request role", ["quality", "supervisor", "admin"])
+        if st.button("Submit"):
+            supabase.table("access_requests").insert({"username": user, "requested_role": req_role}).execute()
+            st.success("✅ Request submitted")
+
+    elif choice == "Request Password Change":
+        user = st.text_input("Username")
+        new_pw = st.text_input("New Password", type="password")
+        if st.button("Submit"):
+            hashed = hash_password(new_pw)
+            supabase.table("password_requests").insert({"username": user, "new_password_hash": hashed}).execute()
+            st.success("✅ Password change request submitted")
+
+# ------------------------
+# DASHBOARD
+# ------------------------
+def dashboard_page():
+    st.title("📊 Production Dashboard")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start date", datetime.today() - timedelta(days=7))
+    with col2:
+        end_date = st.date_input("End date", datetime.today())
+
+    # Query only filtered data
+    prod = supabase.table("production_metrics").select("*")\
+        .gte("date", str(start_date)).lte("date", str(end_date)).execute()
+    qual = supabase.table("quality_metrics").select("*")\
+        .gte("date", str(start_date)).lte("date", str(end_date)).execute()
+
+    df_prod = pd.DataFrame(prod.data)
+    df_qual = pd.DataFrame(qual.data)
+
+    if not df_prod.empty:
+        st.subheader("📦 Production Summary")
+        st.metric("Total Parts", df_prod["produced_parts"].sum())
+        st.line_chart(df_prod.set_index("date")["produced_parts"])
+    else:
+        st.info("No production data")
+
+    if not df_qual.empty:
+        st.subheader("🛠 Quality Summary")
+        st.metric("Total Defects", df_qual["defects"].sum())
+        st.line_chart(df_qual.set_index("date")["defects"])
+    else:
+        st.info("No quality data")
+
+# ------------------------
+# ROLE PAGES
+# ------------------------
+def operator_page():
+    st.header("👷 Operator - Enter Production Data")
+    date = st.date_input("Date", datetime.today())
+    shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
+    parts = st.number_input("Produced Parts", min_value=0)
+    if st.button("Submit"):
+        supabase.table("production_metrics").insert({
+            "date": str(date),
+            "shift": shift,
+            "produced_parts": parts,
+            "operator": st.session_state.username
+        }).execute()
+        log_action(st.session_state.user_id, "Submitted production data")
+        st.success("✅ Data submitted")
+
+def quality_page():
+    st.header("🔍 Quality Inspector - Enter Defects")
+    date = st.date_input("Date", datetime.today())
+    shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
+    defects = st.number_input("Defects", min_value=0)
+    if st.button("Submit"):
+        supabase.table("quality_metrics").insert({
+            "date": str(date),
+            "shift": shift,
+            "defects": defects,
+            "inspector": st.session_state.username
+        }).execute()
+        log_action(st.session_state.user_id, "Submitted quality data")
+        st.success("✅ Data submitted")
+
+def supervisor_page():
+    st.header("🧑‍💼 Supervisor - Dashboard Access")
+    dashboard_page()
+
+def admin_page():
+    st.header("🛠 Admin Panel")
+
+    st.subheader("Approve Role Requests")
+    reqs = supabase.table("access_requests").select("*").eq("status", "pending").execute()
+    for r in reqs.data:
+        st.write(r)
+        if st.button(f"Approve {r['username']}", key=r['id']):
+            supabase.table("users").update({"role": r["requested_role"]}).eq("username", r["username"]).execute()
+            supabase.table("access_requests").update({"status": "approved"}).eq("id", r["id"]).execute()
+            st.success(f"✅ {r['username']} promoted to {r['requested_role']}")
+
+    st.subheader("Approve Password Requests")
+    preqs = supabase.table("password_requests").select("*").eq("status", "pending").execute()
+    for r in preqs.data:
+        st.write(r)
+        if st.button(f"Approve password for {r['username']}", key=r['id']):
+            supabase.table("users").update({"password_hash": r["new_password_hash"]}).eq("username", r["username"]).execute()
+            supabase.table("password_requests").update({"status": "approved"}).eq("id", r["id"]).execute()
+            st.success(f"✅ Password updated for {r['username']}")
+
+def god_admin_page():
+    st.header("👑 God Admin")
+    st.write("Full DB access")
+    if st.button("Reset System"):
+        for table in ["users", "production_metrics", "quality_metrics", "access_requests", "password_requests", "audit_logs"]:
+            supabase.table(table).delete().neq("id", "000").execute()
+        st.success("✅ System reset")
+
+# ------------------------
+# MAIN
+# ------------------------
+def main():
+    if "username" not in st.session_state:
+        auth_page()
+        return
+
+    auto_logout_check()
+
+    st.sidebar.title(f"Welcome, {st.session_state.username}")
+    if st.sidebar.button("Logout"):
+        set_user_online_status(st.session_state.user_id, False)
+        log_action(st.session_state.user_id, "Logout")
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
+    role = st.session_state.role
+    if role == "operator":
+        operator_page()
+    elif role == "quality":
+        quality_page()
+    elif role == "supervisor":
+        supervisor_page()
+    elif role == "admin":
+        admin_page()
+    elif role == "god_admin":
+        god_admin_page()
+    else:
+        st.error("Unknown role")
+
+if __name__ == "__main__":
+    main()
