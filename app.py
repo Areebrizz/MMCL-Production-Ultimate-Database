@@ -646,69 +646,76 @@ def production_entry_page():
                 st.error(f"⚠️ Error: {e}")
 
 # -------------------------
-# Quality Data Entry Page
-# -------------------------
 def quality_data_entry_page():
     update_activity()
     st.header("📊 QAHSE Quality Data Entry")
-    
+
     with st.form("quality_entry_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
-        
+
         with col1:
             entry_date = st.date_input("Date", value=datetime.today())
             shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
             total_vehicles = st.number_input("Total Vehicles Inspected", min_value=0, step=1)
             passed_vehicles = st.number_input("Vehicles Passed", min_value=0, step=1)
             failed_vehicles = st.number_input("Vehicles Failed", min_value=0, step=1)
-        
+
         with col2:
             total_defects = st.number_input("Total Defects Found", min_value=0, step=1)
             critical_defects = st.number_input("Critical Defects", min_value=0, step=1)
             major_defects = st.number_input("Major Defects", min_value=0, step=1)
             minor_defects = st.number_input("Minor Defects", min_value=0, step=1)
-        
-        # Calculate DPU (Defects Per Unit)
-        dpu = total_defects / total_vehicles if total_vehicles > 0 else 0
-        
-        st.markdown("### Quality Metrics")
-        st.metric("DPU (Defects Per Unit)", f"{dpu:.2f}")
-        st.metric("First Pass Yield", f"{(passed_vehicles/total_vehicles*100):.1f}%" if total_vehicles > 0 else "0%")
-        
+
         defect_types = st.text_area("Major Defect Types (describe the main issues found)")
         corrective_actions = st.text_area("Corrective Actions Taken")
-        
+
         submitted = st.form_submit_button("💾 Save Quality Data")
-        
-        if submitted:
-            update_activity()
-            quality_row = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "date": entry_date.isoformat(),
-                "shift": shift,
-                "total_vehicles": total_vehicles,
-                "passed_vehicles": passed_vehicles,
-                "failed_vehicles": failed_vehicles,
-                "total_defects": total_defects,
-                "critical_defects": critical_defects,
-                "major_defects": major_defects,
-                "minor_defects": minor_defects,
-                "dpu": dpu,
-                "defect_types": defect_types,
-                "corrective_actions": corrective_actions,
-                "entered_by": st.session_state.username,
-                "department": "QAHSE"
-            }
-            
-            try:
-                response = supabase.table("quality_metrics").insert(quality_row).execute()
-                if response.data:
-                    log_audit_event(st.session_state.user_id, "create", "quality_record", response.data[0]["id"], f"Created QAHSE quality record for {entry_date}")
-                    st.success(f"✅ QAHSE quality data saved for {entry_date}, {shift} shift")
-                else:
-                    st.error("❌ Failed to save quality data.")
-            except Exception as e:
-                st.error(f"⚠️ Error: {e}")
+
+    # ✅ Live calculations happen outside the form
+    dpu = total_defects / total_vehicles if total_vehicles > 0 else 0
+    fpy = (passed_vehicles / total_vehicles * 100) if total_vehicles > 0 else 0
+
+    st.markdown("### Quality Metrics")
+    st.metric("DPU (Defects Per Unit)", f"{dpu:.2f}")
+    st.metric("First Pass Yield", f"{fpy:.1f}%")
+
+    if submitted:
+        update_activity()
+        quality_row = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "date": entry_date.isoformat(),
+            "shift": shift,
+            "total_vehicles": total_vehicles,
+            "passed_vehicles": passed_vehicles,
+            "failed_vehicles": failed_vehicles,
+            "total_defects": total_defects,
+            "critical_defects": critical_defects,
+            "major_defects": major_defects,
+            "minor_defects": minor_defects,
+            "dpu": dpu,
+            "fpy": fpy,  # ✅ Save FPY too
+            "defect_types": defect_types,
+            "corrective_actions": corrective_actions,
+            "entered_by": st.session_state.username,
+            "department": "QAHSE"
+        }
+
+        try:
+            response = supabase.table("quality_metrics").insert(quality_row).execute()
+            if response.data:
+                log_audit_event(
+                    st.session_state.user_id,
+                    "create",
+                    "quality_record",
+                    response.data[0]["id"],
+                    f"Created QAHSE quality record for {entry_date}"
+                )
+                st.success(f"✅ QAHSE quality data saved for {entry_date}, {shift} shift")
+            else:
+                st.error("❌ Failed to save quality data.")
+        except Exception as e:
+            st.error(f"⚠️ Error: {e}")
+
 
 # -------------------------
 # Dashboard Page
