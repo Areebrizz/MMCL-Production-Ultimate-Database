@@ -36,9 +36,10 @@ if "authenticated" not in st.session_state:
     st.session_state.user_id = None
     st.session_state.department = None
     st.session_state.last_activity = datetime.now().isoformat()
+    st.session_state.last_activity_update = time.time()
 
 # -------------------------
-# Security Functions (From First App)
+# Security Functions
 # -------------------------
 def hash_password(password: str) -> str:
     """Hash password using bcrypt"""
@@ -54,8 +55,9 @@ def auto_logout_check():
     if "last_activity" in st.session_state:
         idle_time = datetime.utcnow() - datetime.fromisoformat(st.session_state.last_activity)
         if idle_time > timedelta(minutes=MAX_IDLE_MINUTES):
-            set_user_online_status(st.session_state.user_id, False)
-            log_audit_event(st.session_state.user_id, "auto_logout", "system", "N/A", "Auto logout due to inactivity")
+            if "user_id" in st.session_state:
+                set_user_online_status(st.session_state.user_id, False)
+                log_audit_event(st.session_state.user_id, "auto_logout", "system", "N/A", "Auto logout due to inactivity")
             st.warning("You were logged out due to inactivity.")
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
@@ -68,7 +70,7 @@ def update_activity():
         set_user_online_status(st.session_state.user_id, True)
 
 # -------------------------
-# Database Functions (Enhanced with Error Handling)
+# Database Functions
 # -------------------------
 def get_user(username):
     try:
@@ -77,6 +79,22 @@ def get_user(username):
     except Exception as e:
         st.error(f"Error fetching user: {str(e)}")
         return None
+
+def get_all_users():
+    try:
+        response = supabase.table("users").select("*").execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching users: {str(e)}")
+        return []
+
+def get_online_users():
+    try:
+        response = supabase.table("users").select("username, role, department, last_activity").eq("is_online", True).execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching online users: {str(e)}")
+        return []
 
 def create_user(username, password, role="viewer", approved=False, department=None):
     try:
@@ -96,16 +114,38 @@ def create_user(username, password, role="viewer", approved=False, department=No
         st.error(f"Error creating user: {str(e)}")
         return None
 
-def get_all_users():
+def update_user_role(user_id, new_role):
     try:
-        response = supabase.table("users").select("*").execute()
-        return response.data
+        response = supabase.table("users").update({"role": new_role}).eq("id", user_id).execute()
+        return True
     except Exception as e:
-        st.error(f"Error fetching users: {str(e)}")
-        return []
+        st.error(f"Error updating user role: {str(e)}")
+        return False
 
-# Update all other database functions with similar try-catch blocks...
-# For example:
+def approve_user(user_id):
+    try:
+        response = supabase.table("users").update({"approved": True}).eq("id", user_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error approving user: {str(e)}")
+        return False
+
+def reset_user_password(user_id, new_password):
+    try:
+        hashed_password = hash_password(new_password)
+        response = supabase.table("users").update({"password_hash": hashed_password}).eq("id", user_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error resetting password: {str(e)}")
+        return False
+
+def update_user_department(user_id, department):
+    try:
+        response = supabase.table("users").update({"department": department}).eq("id", user_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error updating department: {str(e)}")
+        return False
 
 def set_user_online_status(user_id, is_online):
     try:
@@ -115,7 +155,97 @@ def set_user_online_status(user_id, is_online):
         }).eq("id", user_id).execute()
         return True
     except Exception as e:
-        st.error(f"Error updating online status: {str(e)}")
+        st.error(f"Error setting online status: {str(e)}")
+        return False
+
+def create_access_request(username, requested_role, reason):
+    try:
+        request_data = {
+            "username": username,
+            "requested_role": requested_role,
+            "reason": reason,
+            "status": "pending",
+            "requested_at": datetime.utcnow().isoformat(),
+            "request_type": "role_access"
+        }
+        response = supabase.table("access_requests").insert(request_data).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        st.error(f"Error creating access request: {str(e)}")
+        return None
+
+def create_password_change_request(username, new_password):
+    try:
+        hashed_password = hash_password(new_password)
+        request_data = {
+            "username": username,
+            "new_password_hash": hashed_password,
+            "requested_role": "none",
+            "status": "pending",
+            "requested_at": datetime.utcnow().isoformat(),
+            "request_type": "password_change"
+        }
+        response = supabase.table("access_requests").insert(request_data).execute()
+        return response.data is not None
+    except Exception as e:
+        st.error(f"Error creating password change request: {str(e)}")
+        return False
+
+def get_pending_requests():
+    try:
+        response = supabase.table("access_requests").select("*").eq("status", "pending").eq("request_type", "role_access").execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching pending requests: {str(e)}")
+        return []
+
+def get_password_change_requests():
+    try:
+        response = supabase.table("access_requests").select("*").eq("status", "pending").eq("request_type", "password_change").execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching password change requests: {str(e)}")
+        return []
+
+def update_request_status(request_id, status, approved_by):
+    try:
+        response = supabase.table("access_requests").update({
+            "status": status,
+            "approved_by": approved_by,
+            "reviewed_at": datetime.utcnow().isoformat()
+        }).eq("id", request_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error updating request status: {str(e)}")
+        return False
+
+def approve_password_change(request_id, approved_by):
+    try:
+        response = supabase.table("access_requests").select("*").eq("id", request_id).execute()
+        if not response.data:
+            st.error("Password change request not found!")
+            return False
+        
+        request = response.data[0]
+        user = get_user(request['username'])
+        
+        if not user:
+            st.error(f"User {request['username']} not found!")
+            return False
+        
+        update_response = supabase.table("users").update({
+            "password_hash": request['new_password_hash']
+        }).eq("id", user['id']).execute()
+        
+        if update_response.data:
+            log_audit_event(st.session_state.user_id, "password_changed", "user", user['id'], f"Admin changed password for {user['username']}")
+            return True
+        else:
+            st.error("Failed to update user password!")
+            return False
+        
+    except Exception as e:
+        st.error(f"Error approving password change: {str(e)}")
         return False
 
 def log_audit_event(user_id, action, target_type, target_id, details):
@@ -136,11 +266,90 @@ def log_audit_event(user_id, action, target_type, target_id, details):
         st.error(f"Error logging audit event: {str(e)}")
         return False
 
+def get_audit_logs(limit=100):
+    try:
+        response = supabase.table("audit_log").select("*").order("timestamp", desc=True).limit(limit).execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching audit logs: {str(e)}")
+        return []
+
+def can_edit_record(record_date):
+    """Check if record can be edited (within 7 days)"""
+    try:
+        record_date = pd.to_datetime(record_date).date()
+        today = date.today()
+        return (today - record_date).days <= 7
+    except:
+        return False
+
+def update_password_request_status(request_id, status, approved_by):
+    try:
+        response = supabase.table("access_requests").update({
+            "status": status,
+            "approved_by": approved_by,
+            "reviewed_at": datetime.utcnow().isoformat()
+        }).eq("id", request_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error updating password request status: {str(e)}")
+        return False
+
+def get_production_metrics(start_date=None, end_date=None, department=None):
+    try:
+        query = supabase.table("production_metrics").select("*")
+        if start_date:
+            query = query.gte("date", str(start_date))
+        if end_date:
+            query = query.lte("date", str(end_date))
+        if department and department != "All":
+            query = query.eq("department", department)
+        response = query.execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching production metrics: {str(e)}")
+        return []
+
+def get_quality_metrics(start_date=None, end_date=None, department=None):
+    try:
+        query = supabase.table("quality_metrics").select("*")
+        if start_date:
+            query = query.gte("date", str(start_date))
+        if end_date:
+            query = query.lte("date", str(end_date))
+        if department and department != "All":
+            query = query.eq("department", department)
+        response = query.execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching quality metrics: {str(e)}")
+        return []
+
+def get_recent_production_records(limit=50):
+    try:
+        response = supabase.table("production_metrics").select("*").order("date", desc=True).limit(limit).execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching recent production records: {str(e)}")
+        return []
+
+def get_record_counts():
+    try:
+        production_response = supabase.table("production_metrics").select("id", count="exact").execute()
+        quality_response = supabase.table("quality_metrics").select("id", count="exact").execute()
+        return {
+            "production": production_response.count if hasattr(production_response, 'count') else 0,
+            "quality": quality_response.count if hasattr(quality_response, 'count') else 0
+        }
+    except Exception as e:
+        st.error(f"Error fetching record counts: {str(e)}")
+        return {"production": 0, "quality": 0}
+
 # -------------------------
-# Pre-defined God Admin (Secure Version)
+# Pre-defined God Admin
 # -------------------------
 GOD_ADMIN_USERNAME = "admin"
-GOD_ADMIN_PASSWORD = st.secrets.get("GOD_ADMIN_PASSWORD", "admin123")  # Fallback to default
+GOD_ADMIN_PASSWORD = st.secrets.get("GOD_ADMIN_PASSWORD", "admin123")
 
 def setup_god_admin():
     """Create/update god admin account securely"""
@@ -162,7 +371,7 @@ def setup_god_admin():
             if response.data:
                 st.success("God Admin account created!")
             else:
-                st.warning("God Admin account might already exist or there was an issue creating it.")
+                st.warning("God Admin account might already exist.")
         else:
             # Sync password if changed in secrets
             if not check_password(GOD_ADMIN_PASSWORD, existing_admin["password_hash"]):
@@ -171,16 +380,11 @@ def setup_god_admin():
                 }).eq("username", GOD_ADMIN_USERNAME).execute()
                 if response.data:
                     st.warning("God Admin password updated!")
-                else:
-                    st.warning("Could not update God Admin password.")
     except Exception as e:
         st.error(f"Error setting up God Admin: {str(e)}")
-        # Don't crash the app, just log the error
-        print(f"God Admin setup error: {e}")
-
 
 # -------------------------
-# Login/Registration Page (Secure Version)
+# Login/Registration Page
 # -------------------------
 def auth_page():
     tab1, tab2 = st.tabs(["🔐 Login", "📝 Register"])
@@ -238,7 +442,7 @@ def auth_page():
                         st.error("Failed to create account")
 
 # -------------------------
-# Navigation Sidebar (With Security)
+# Navigation Sidebar
 # -------------------------
 def show_sidebar():
     with st.sidebar:
@@ -286,8 +490,9 @@ def show_sidebar():
                 st.warning(f"Auto logout in {int(remaining.total_seconds() / 60)} minutes")
         
         if st.button("🚪 Logout"):
-            set_user_online_status(st.session_state.user_id, False)
-            log_audit_event(st.session_state.user_id, "logout", "system", "N/A", "User logged out")
+            if "user_id" in st.session_state:
+                set_user_online_status(st.session_state.user_id, False)
+                log_audit_event(st.session_state.user_id, "logout", "system", "N/A", "User logged out")
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
@@ -295,9 +500,10 @@ def show_sidebar():
     return selected_page
 
 # -------------------------
-# Profile Page (Secure Version)
+# Profile Page
 # -------------------------
 def profile_page():
+    update_activity()
     st.header("👤 User Profile")
     
     # Get current user data
@@ -312,8 +518,7 @@ def profile_page():
             st.write(f"**Role:** {user['role']}")
             st.write(f"**Department:** {user.get('department', 'Not assigned')}")
             st.write(f"**Account Status:** {'✅ Approved' if user['approved'] else '⏳ Pending approval'}")
-            st.write(f"**Member since:** {pd.to_datetime(user['created_at']).strftime('%Y-%m-%d')}")
-            st.write(f"**Last Activity:** {pd.to_datetime(user.get('last_activity', 'Never')).strftime('%Y-%m-%d %H:%M')}")
+            st.write(f"**Member since:** {pd.to_datetime(user['created_at']).strftime('%Y-%m-%d') if user.get('created_at') else 'N/A'}")
         
         with col2:
             st.subheader("Change Password")
@@ -358,7 +563,7 @@ def profile_page():
         st.error("User not found!")
 
 # -------------------------
-# Production Entry Page (Secure)
+# Production Entry Page
 # -------------------------
 def production_entry_page():
     update_activity()
@@ -426,7 +631,7 @@ def production_entry_page():
                 st.error(f"⚠️ Error: {e}")
 
 # -------------------------
-# Quality Data Entry Page (Secure)
+# Quality Data Entry Page
 # -------------------------
 def quality_data_entry_page():
     update_activity()
@@ -491,7 +696,7 @@ def quality_data_entry_page():
                 st.error(f"⚠️ Error: {e}")
 
 # -------------------------
-# Dashboard Page (With Security)
+# Dashboard Page
 # -------------------------
 def dashboard_page():
     update_activity()
@@ -509,23 +714,10 @@ def dashboard_page():
     department_filter = st.selectbox("Filter by Department", departments)
     
     # Fetch production data
-    try:
-        query = supabase.table("production_metrics").select("*")
-        if department_filter and department_filter != "All":
-            query = query.eq("department", department_filter)
-        records = query.execute().data
-    except Exception as e:
-        st.error(f"⚠️ Could not fetch production data: {e}")
-        records = []
+    records = get_production_metrics(start_date, end_date, department_filter)
     
     # Fetch quality data
-    try:
-        quality_query = supabase.table("quality_metrics").select("*")
-        if department_filter and department_filter != "All":
-            quality_query = quality_query.eq("department", department_filter)
-        quality_records = quality_query.execute().data
-    except:
-        quality_records = []
+    quality_records = get_quality_metrics(start_date, end_date, department_filter)
     
     if records:
         df = pd.DataFrame(records)
@@ -655,7 +847,7 @@ def access_request_page():
         st.success("You already have elevated privileges!")
 
 # -------------------------
-# Admin Pages (Secure)
+# Admin Pages
 # -------------------------
 def user_management_page():
     update_activity()
@@ -801,10 +993,7 @@ def production_control_page():
     st.header("⚙️ Production Data Control")
     
     # Fetch production records
-    try:
-        records = supabase.table("production_metrics").select("*").order("date", desc=True).limit(50).execute().data
-    except:
-        records = []
+    records = get_recent_production_records(50)
     
     if records:
         for record in records:
@@ -875,24 +1064,22 @@ def system_monitor_page():
     with col2:
         st.subheader("📈 System Stats")
         users = get_all_users()
-        records = supabase.table("production_metrics").select("id", count="exact").execute()
-        quality_records = supabase.table("quality_metrics").select("id", count="exact").execute()
+        record_counts = get_record_counts()
         
         st.metric("Total Users", len(users))
         st.metric("Online Users", len(online_users))
-        st.metric("Production Records", records.count if records else 0)
-        st.metric("Quality Records", quality_records.count if quality_records else 0)
+        st.metric("Production Records", record_counts["production"])
+        st.metric("Quality Records", record_counts["quality"])
 
 # -------------------------
-# Main App Logic (With Error Handling)
+# Main App Logic
 # -------------------------
 def main():
-    # Setup god admin on first run (with error handling)
+    # Setup god admin on first run
     try:
         setup_god_admin()
     except Exception as e:
         st.error(f"Failed to setup God Admin: {str(e)}")
-        # Continue anyway - the app might still work
     
     if not st.session_state.authenticated:
         auth_page()
@@ -902,7 +1089,7 @@ def main():
             auto_logout_check()
             
             # Update user activity every minute
-            if 'last_activity_update' not in st.session_state or time.time() - st.session_state.last_activity_update > 60:
+            if time.time() - st.session_state.last_activity_update > 60:
                 set_user_online_status(st.session_state.user_id, True)
                 st.session_state.last_activity_update = time.time()
             
