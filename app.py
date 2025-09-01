@@ -981,9 +981,6 @@ def user_management_page():
                     st.rerun()
                 else:
                     st.error("Failed to create user")
-    
-    else:
-        st.info("No users found.")
 def access_requests_page():
     update_activity()
     st.header("📋 Pending Access Requests")
