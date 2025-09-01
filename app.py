@@ -650,37 +650,35 @@ def quality_data_entry_page():
     update_activity()
     st.header("📊 QAHSE Quality Data Entry")
 
-    with st.form("quality_entry_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
+    # Inputs OUTSIDE form so they update live
+    col1, col2 = st.columns(2)
 
-        with col1:
-            entry_date = st.date_input("Date", value=datetime.today())
-            shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
-            total_vehicles = st.number_input("Total Vehicles Inspected", min_value=0, step=1)
-            passed_vehicles = st.number_input("Vehicles Passed", min_value=0, step=1)
-            failed_vehicles = st.number_input("Vehicles Failed", min_value=0, step=1)
+    with col1:
+        entry_date = st.date_input("Date", value=datetime.today())
+        shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
+        total_vehicles = st.number_input("Total Vehicles Inspected", min_value=0, step=1)
+        passed_vehicles = st.number_input("Vehicles Passed", min_value=0, step=1)
+        failed_vehicles = st.number_input("Vehicles Failed", min_value=0, step=1)
 
-        with col2:
-            total_defects = st.number_input("Total Defects Found", min_value=0, step=1)
-            critical_defects = st.number_input("Critical Defects", min_value=0, step=1)
-            major_defects = st.number_input("Major Defects", min_value=0, step=1)
-            minor_defects = st.number_input("Minor Defects", min_value=0, step=1)
+    with col2:
+        total_defects = st.number_input("Total Defects Found", min_value=0, step=1)
+        critical_defects = st.number_input("Critical Defects", min_value=0, step=1)
+        major_defects = st.number_input("Major Defects", min_value=0, step=1)
+        minor_defects = st.number_input("Minor Defects", min_value=0, step=1)
 
-        defect_types = st.text_area("Major Defect Types (describe the main issues found)")
-        corrective_actions = st.text_area("Corrective Actions Taken")
+    defect_types = st.text_area("Major Defect Types (describe the main issues found)")
+    corrective_actions = st.text_area("Corrective Actions Taken")
 
-        submitted = st.form_submit_button("💾 Save Quality Data")
-
-    # ✅ Live calculations happen outside the form
+    # ✅ Live calculations (happen on every widget change)
     dpu = total_defects / total_vehicles if total_vehicles > 0 else 0
     fpy = (passed_vehicles / total_vehicles * 100) if total_vehicles > 0 else 0
 
-    st.markdown("### Quality Metrics")
+    st.markdown("### Quality Metrics (Live)")
     st.metric("DPU (Defects Per Unit)", f"{dpu:.2f}")
     st.metric("First Pass Yield", f"{fpy:.1f}%")
 
-    if submitted:
-        update_activity()
+    # Save button (manual submit)
+    if st.button("💾 Save Quality Data"):
         quality_row = {
             "timestamp": datetime.utcnow().isoformat(),
             "date": entry_date.isoformat(),
@@ -693,7 +691,7 @@ def quality_data_entry_page():
             "major_defects": major_defects,
             "minor_defects": minor_defects,
             "dpu": dpu,
-            "fpy": fpy,  # ✅ Save FPY too
+            "fpy": fpy,
             "defect_types": defect_types,
             "corrective_actions": corrective_actions,
             "entered_by": st.session_state.username,
@@ -715,6 +713,7 @@ def quality_data_entry_page():
                 st.error("❌ Failed to save quality data.")
         except Exception as e:
             st.error(f"⚠️ Error: {e}")
+
 
 
 # -------------------------
