@@ -83,6 +83,12 @@ def get_user(username):
 def get_all_users():
     try:
         response = supabase.table("users").select("*").execute()
+        # Ensure each user has all required fields with defaults
+        for user in response.data:
+            user.setdefault('approved', False)
+            user.setdefault('role', 'viewer')
+            user.setdefault('department', 'Not set')
+            user.setdefault('is_online', False)
         return response.data
     except Exception as e:
         st.error(f"Error fetching users: {str(e)}")
@@ -344,6 +350,15 @@ def get_record_counts():
     except Exception as e:
         st.error(f"Error fetching record counts: {str(e)}")
         return {"production": 0, "quality": 0}
+        
+def get_pending_users():
+    """Get all users waiting for approval"""
+    try:
+        response = supabase.table("users").select("*").eq("approved", False).execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching pending users: {str(e)}")
+        return []
 
 # -------------------------
 # Pre-defined God Admin
@@ -853,51 +868,102 @@ def user_management_page():
     update_activity()
     st.header("👥 User Management")
     
-    users = get_all_users()
-    if users:
-        for user in users:
-            with st.expander(f"User: {user['username']} - {user['role']} ({'✅ Approved' if user['approved'] else '⏳ Pending'})"):
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.write(f"**Department:** {user.get('department', 'Not set')}")
-                    st.write(f"**Last Login:** {user.get('last_login', 'Never')}")
-                    st.write(f"**Status:** {'🟢 Online' if user.get('is_online') else '🔴 Offline'}")
-                
-                with col2:
-                    if user['username'] != GOD_ADMIN_USERNAME:
-                        new_role = st.selectbox("Role", ["viewer", "supervisor", "admin"], 
-                                              index=["viewer", "supervisor", "admin"].index(user['role']),
-                                              key=f"role_{user['id']}")
-                        new_dept = st.selectbox("Department", ["Assembly Shop", "Paint Shop", "Weld Shop", "QAHSE", "PDI"], 
-                                              index=0 if not user.get('department') else ["Assembly Shop", "Paint Shop", "Weld Shop", "QAHSE", "PDI"].index(user['department']),
-                                              key=f"dept_{user['id']}")
-                
-                with col3:
-                    if user['username'] != GOD_ADMIN_USERNAME:
-                        if st.button("Update User", key=f"update_{user['id']}"):
+    # Tab interface for different management sections
+    tab1, tab2 = st.tabs(["🔄 Pending Approvals", "👤 Manage Existing Users"])
+    
+    with tab1:
+        st.subheader("Users Waiting for Approval")
+        pending_users = get_pending_users()
+        
+        if pending_users:
+            for user in pending_users:
+                with st.expander(f"Pending: {user['username']} - {user.get('department', 'No department')}"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"**Username:** {user['username']}")
+                        st.write(f"**Department:** {user.get('department', 'Not set')}")
+                        st.write(f"**Requested Role:** {user.get('role', 'viewer')}")
+                        st.write(f"**Created:** {pd.to_datetime(user['created_at']).strftime('%Y-%m-%d %H:%M') if user.get('created_at') else 'N/A'}")
+                    
+                    with col2:
+                        if st.button("✅ Approve User", key=f"approve_{user['id']}"):
                             update_activity()
-                            update_user_role(user['id'], new_role)
-                            update_user_department(user['id'], new_dept)
-                            st.success("User updated!")
-                            time.sleep(1)
-                            st.rerun()
-                        
-                        if st.button("Reset Password", key=f"pwd_{user['id']}"):
-                            update_activity()
-                            if reset_user_password(user['id'], "TempPassword123!"):
-                                st.success("Password reset to 'TempPassword123!'")
-                                log_audit_event(st.session_state.user_id, "password_reset", "user", user['id'], f"Reset password for {user['username']}")
+                            if approve_user(user['id']):
+                                st.success(f"✅ {user['username']} approved!")
+                                log_audit_event(st.session_state.user_id, "user_approved", "user", user['id'], f"Approved user {user['username']}")
+                                time.sleep(1)
+                                st.rerun()
                             else:
-                                st.error("Failed to reset password")
+                                st.error("Failed to approve user")
                         
-                        if st.button("Force Logout", key=f"logout_{user['id']}"):
+                        if st.button("❌ Reject User", key=f"reject_{user['id']}"):
                             update_activity()
-                            if set_user_online_status(user['id'], False):
-                                st.success("User logged out forcefully")
-                                log_audit_event(st.session_state.user_id, "force_logout", "user", user['id'], f"Force logged out {user['username']}")
-                            else:
-                                st.error("Failed to force logout")
+                            try:
+                                # Delete the user who was rejected
+                                response = supabase.table("users").delete().eq("id", user['id']).execute()
+                                if response.data:
+                                    st.success(f"❌ {user['username']} rejected and removed!")
+                                    log_audit_event(st.session_state.user_id, "user_rejected", "user", user['id'], f"Rejected user {user['username']}")
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to reject user")
+                            except Exception as e:
+                                st.error(f"Error rejecting user: {str(e)}")
+        else:
+            st.success("✅ No pending user approvals!")
+    
+    with tab2:
+        st.subheader("Manage Existing Users")
+        users = get_all_users()
+        approved_users = [user for user in users if user['approved']]
+        
+        if approved_users:
+            for user in approved_users:
+                with st.expander(f"User: {user['username']} - {user['role']} ({'✅ Approved' if user['approved'] else '⏳ Pending'})"):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.write(f"**Department:** {user.get('department', 'Not set')}")
+                        st.write(f"**Last Login:** {user.get('last_login', 'Never')}")
+                        st.write(f"**Status:** {'🟢 Online' if user.get('is_online') else '🔴 Offline'}")
+                    
+                    with col2:
+                        if user['username'] != GOD_ADMIN_USERNAME:
+                            new_role = st.selectbox("Role", ["viewer", "supervisor", "admin"], 
+                                                  index=["viewer", "supervisor", "admin"].index(user['role']),
+                                                  key=f"role_{user['id']}")
+                            new_dept = st.selectbox("Department", ["Assembly Shop", "Paint Shop", "Weld Shop", "QAHSE", "PDI"], 
+                                                  index=0 if not user.get('department') else ["Assembly Shop", "Paint Shop", "Weld Shop", "QAHSE", "PDI"].index(user['department']),
+                                                  key=f"dept_{user['id']}")
+                    
+                    with col3:
+                        if user['username'] != GOD_ADMIN_USERNAME:
+                            if st.button("Update User", key=f"update_{user['id']}"):
+                                update_activity()
+                                update_user_role(user['id'], new_role)
+                                update_user_department(user['id'], new_dept)
+                                st.success("User updated!")
+                                log_audit_event(st.session_state.user_id, "user_updated", "user", user['id'], f"Updated {user['username']} to {new_role} in {new_dept}")
+                                time.sleep(1)
+                                st.rerun()
+                            
+                            if st.button("Reset Password", key=f"pwd_{user['id']}"):
+                                update_activity()
+                                if reset_user_password(user['id'], "TempPassword123!"):
+                                    st.success("Password reset to 'TempPassword123!'")
+                                    log_audit_event(st.session_state.user_id, "password_reset", "user", user['id'], f"Reset password for {user['username']}")
+                                else:
+                                    st.error("Failed to reset password")
+                            
+                            if st.button("Force Logout", key=f"logout_{user['id']}"):
+                                update_activity()
+                                if set_user_online_status(user['id'], False):
+                                    st.success("User logged out forcefully")
+                                    log_audit_event(st.session_state.user_id, "force_logout", "user", user['id'], f"Force logged out {user['username']}")
+                                else:
+                                    st.error("Failed to force logout")
         
         st.subheader("Create New User")
         with st.form("create_user_form"):
@@ -910,6 +976,7 @@ def user_management_page():
                 update_activity()
                 if create_user(new_username, new_password, new_role, True, new_department):
                     st.success("User created successfully!")
+                    log_audit_event(st.session_state.user_id, "user_created", "user", "N/A", f"Created user {new_username} as {new_role}")
                     time.sleep(1)
                     st.rerun()
                 else:
@@ -917,7 +984,6 @@ def user_management_page():
     
     else:
         st.info("No users found.")
-
 def access_requests_page():
     update_activity()
     st.header("📋 Pending Access Requests")
