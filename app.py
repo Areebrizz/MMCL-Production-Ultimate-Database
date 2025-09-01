@@ -4,7 +4,13 @@ from supabase import create_client, Client
 from datetime import datetime, date, timedelta
 import time
 import bcrypt
-
+# Add this import (it will only load when needed)
+production_line_available = True
+try:
+    from production_line import production_line_page, setup_production_line_table
+except ImportError:
+    production_line_available = False
+    st.warning("Production line module not available")
 # -------------------------
 # Page Config
 # -------------------------
@@ -474,6 +480,10 @@ def show_sidebar():
         # Navigation options based on role and department
         pages = ["Dashboard", "Profile"]
         
+        # Add Production Line if available
+        if production_line_available:
+            pages.append("Production Line")
+        
         # Production departments get their specific production entry
         if st.session_state.role in ["supervisor", "admin"] and st.session_state.department in ["Assembly Shop", "Paint Shop", "Weld Shop", "PDI"]:
             pages.append("Production Entry")
@@ -513,7 +523,6 @@ def show_sidebar():
             st.rerun()
     
     return selected_page
-
 # -------------------------
 # Profile Page
 # -------------------------
@@ -1407,6 +1416,8 @@ def main():
                 dashboard_page()
             elif selected_page == "Profile":
                 profile_page()
+            elif selected_page == "Production Line" and production_line_available:
+                production_line_page(supabase, update_activity, log_audit_event, st.session_state)
             elif selected_page == "Production Entry":
                 production_entry_page()
             elif selected_page == "Quality Data Entry":
@@ -1427,6 +1438,3 @@ def main():
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.info("Please try refreshing the page or contact support if the issue persists.")
-
-if __name__ == "__main__":
-    main()
