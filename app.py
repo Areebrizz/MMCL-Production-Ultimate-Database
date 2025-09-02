@@ -1598,3 +1598,7 @@ def main():
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.info("Please try refreshing the page or contact support if the issue persists.")
+
+# Call main!
+if __name__ == "__main__":
+    main()
