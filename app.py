@@ -359,7 +359,91 @@ def get_pending_users():
     except Exception as e:
         st.error(f"Error fetching pending users: {str(e)}")
         return []
+# -------------------------
+# Production Line Tracking Functions
+# -------------------------
+def get_production_lines():
+    """Get all production lines and their stations"""
+    return {
+        "Trim Line": ["Station 1", "Station 2", "Station 3", "Station 4", "Station 5", "Station 6"],
+        "Chassis Line": ["Station 1", "Station 2", "Station 3", "Station 4", "Station 5", "Station 6"],
+        "Weld Shop": ["Station 1", "Station 2", "Station 3", "Station 4", "Station 5", "Station 6", "Station 7", "Station 8"],
+        "Paint Shop": ["Station 1", "Station 2", "Station 3", "Station 4", "Station 5"],
+        "PDI": ["Final Inspection", "Quality Check", "Delivery Prep"]
+    }
 
+def get_vehicles_in_production():
+    """Get all vehicles currently in production"""
+    try:
+        response = supabase.table("production_line").select("*").order("timestamp", desc=True).execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Error fetching production line data: {str(e)}")
+        return []
+
+def add_vehicle_to_line(vehicle_number, line_name, station_name, entered_by):
+    """Add a new vehicle to the production line"""
+    try:
+        vehicle_data = {
+            "vehicle_number": vehicle_number,
+            "line_name": line_name,
+            "station_name": station_name,
+            "status": "in_progress",
+            "entered_by": entered_by,
+            "timestamp": datetime.utcnow().isoformat(),
+            "previous_station": None,
+            "next_station": None
+        }
+        response = supabase.table("production_line").insert(vehicle_data).execute()
+        if response.data:
+            log_audit_event(st.session_state.user_id, "vehicle_added", "production_line", response.data[0]["id"], f"Added vehicle {vehicle_number} to {line_name} - {station_name}")
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error adding vehicle to line: {str(e)}")
+        return False
+
+def move_vehicle(vehicle_id, new_station, new_line=None):
+    """Move vehicle to a new station"""
+    try:
+        # Get current vehicle data
+        response = supabase.table("production_line").select("*").eq("id", vehicle_id).execute()
+        if not response.data:
+            return False
+        
+        vehicle = response.data[0]
+        update_data = {
+            "station_name": new_station,
+            "previous_station": vehicle["station_name"],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        if new_line:
+            update_data["line_name"] = new_line
+        
+        response = supabase.table("production_line").update(update_data).eq("id", vehicle_id).execute()
+        if response.data:
+            log_audit_event(st.session_state.user_id, "vehicle_moved", "production_line", vehicle_id, f"Moved vehicle {vehicle['vehicle_number']} to {new_station}")
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error moving vehicle: {str(e)}")
+        return False
+
+def complete_vehicle(vehicle_id):
+    """Mark vehicle as completed"""
+    try:
+        response = supabase.table("production_line").update({
+            "status": "completed",
+            "timestamp": datetime.utcnow().isoformat()
+        }).eq("id", vehicle_id).execute()
+        if response.data:
+            log_audit_event(st.session_state.user_id, "vehicle_completed", "production_line", vehicle_id, "Vehicle production completed")
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error completing vehicle: {str(e)}")
+        return False
 # -------------------------
 # Pre-defined God Admin
 # -------------------------
@@ -457,6 +541,91 @@ def auth_page():
                         st.error("Failed to create account")
 
 # -------------------------
+# Production Line Visualizer Page
+# -------------------------
+def production_line_visualizer():
+    update_activity()
+    st.header("🚌 Live Production Line Visualizer")
+    
+    # Tab interface for different lines
+    lines = get_production_lines()
+    tabs = st.tabs(list(lines.keys()))
+    
+    # Get all vehicles in production
+    all_vehicles = get_vehicles_in_production()
+    
+    for i, (line_name, stations) in enumerate(lines.items()):
+        with tabs[i]:
+            st.subheader(f"{line_name} Production Flow")
+            
+            # Show current vehicles in this line
+            line_vehicles = [v for v in all_vehicles if v['line_name'] == line_name and v['status'] == 'in_progress']
+            
+            # Create columns for each station
+            cols = st.columns(len(stations))
+            
+            for col_idx, (col, station) in enumerate(zip(cols, stations)):
+                with col:
+                    st.markdown(f"**{station}**")
+                    st.markdown("---")
+                    
+                    # Find vehicles at this station
+                    station_vehicles = [v for v in line_vehicles if v['station_name'] == station]
+                    
+                    for vehicle in station_vehicles:
+                        # Bus icon with vehicle number
+                        st.markdown(f"""
+                        <div style="background-color: #f0f2f6; padding: 10px; border-radius: 10px; margin: 5px 0; text-align: center; border: 2px solid #4CAF50;">
+                            <div style="font-size: 24px;">🚌</div>
+                            <div style="font-weight: bold; font-size: 16px;">{vehicle['vehicle_number']}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Movement buttons
+                        if col_idx < len(stations) - 1:
+                            next_station = stations[col_idx + 1]
+                            if st.button(f"➡️ Move to {next_station}", key=f"move_{vehicle['id']}_{next_station}"):
+                                if move_vehicle(vehicle['id'], next_station):
+                                    st.success(f"Moved {vehicle['vehicle_number']} to {next_station}!")
+                                    time.sleep(1)
+                                    st.rerun()
+                        else:
+                            # Last station - complete vehicle
+                            if st.button("✅ Complete", key=f"complete_{vehicle['id']}"):
+                                if complete_vehicle(vehicle['id']):
+                                    st.success(f"Completed {vehicle['vehicle_number']}!")
+                                    time.sleep(1)
+                                    st.rerun()
+            
+            # Add new vehicle to this line
+            st.markdown("---")
+            with st.expander("➕ Add New Vehicle to Line"):
+                with st.form(f"add_vehicle_{line_name}"):
+                    vehicle_number = st.text_input("Vehicle Number", key=f"vehicle_{line_name}")
+                    station = st.selectbox("Starting Station", stations, key=f"station_{line_name}")
+                    
+                    if st.form_submit_button("Add Vehicle to Line"):
+                        if vehicle_number:
+                            if add_vehicle_to_line(vehicle_number, line_name, station, st.session_state.username):
+                                st.success(f"Added {vehicle_number} to {line_name}!")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("Failed to add vehicle to line")
+                        else:
+                            st.error("Please enter a vehicle number")
+    
+    # Show completed vehicles
+    st.subheader("✅ Recently Completed Vehicles")
+    completed_vehicles = [v for v in all_vehicles if v['status'] == 'completed'][:10]
+    
+    if completed_vehicles:
+        for vehicle in completed_vehicles:
+            st.info(f"🚌 {vehicle['vehicle_number']} - Completed at {pd.to_datetime(vehicle['timestamp']).strftime('%Y-%m-%d %H:%M')}")
+    else:
+        st.info("No vehicles completed yet")
+
+# -------------------------
 # Navigation Sidebar
 # -------------------------
 def show_sidebar():
@@ -472,7 +641,7 @@ def show_sidebar():
         update_activity()
         
         # Navigation options based on role and department
-        pages = ["Dashboard", "Profile"]
+        pages = ["Dashboard", "Profile", "Production Line Visualizer"]  # Added new page
         
         # Production departments get their specific production entry
         if st.session_state.role in ["supervisor", "admin"] and st.session_state.department in ["Assembly Shop", "Paint Shop", "Weld Shop", "PDI"]:
@@ -1407,6 +1576,8 @@ def main():
                 dashboard_page()
             elif selected_page == "Profile":
                 profile_page()
+            elif selected_page == "Production Line Visualizer":  # Added new page
+                production_line_visualizer()
             elif selected_page == "Production Entry":
                 production_entry_page()
             elif selected_page == "Quality Data Entry":
@@ -1427,6 +1598,3 @@ def main():
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.info("Please try refreshing the page or contact support if the issue persists.")
-
-if __name__ == "__main__":
-    main()
