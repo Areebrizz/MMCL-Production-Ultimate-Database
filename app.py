@@ -365,11 +365,11 @@ def get_pending_users():
 def get_production_lines():
     """Get all production lines and their stations"""
     return {
-        "Trim Line": ["Station 1", "Station 2", "Station 3", "Station 4", "Station 5", "Station 6"],
-        "Chassis Line": ["Station 1", "Station 2", "Station 3", "Station 4", "Station 5", "Station 6"],
+        "Trim Line": ["Station 0", "Station 1", "Station 2", "Station 3", "Station 4", "Station 5"],
+        "Chassis Line": ["Station 0", "Station 1", "Station 2", "Station 3", "Station 4", "Station 5"],
         "Weld Shop": ["Station 1", "Station 2", "Station 3", "Station 4", "Station 5", "Station 6", "Station 7", "Station 8"],
         "Paint Shop": ["Station 1", "Station 2", "Station 3", "Station 4", "Station 5"],
-        "PDI": ["Final Inspection", "Quality Check", "Delivery Prep"]
+        "PDI": ["Final Check", "Quality Check", "Delivery Prep"]
     }
 
 def get_vehicles_in_production():
