@@ -1101,6 +1101,10 @@ def dashboard_page():
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     
+    # Safe progress value function to clamp between 0 and 1
+    def get_progress_value(value):
+        return max(0, min(1, value / 100))
+    
     # Color coding for metrics
     def get_color(value, threshold_good=85, threshold_ok=70):
         if value >= threshold_good:
@@ -1122,22 +1126,22 @@ def dashboard_page():
             oee_color = get_color(metrics['oee']['oee'])
             st.metric("Overall OEE", f"{metrics['oee']['oee']}%", 
                      delta_color="normal", help="World-class: 85%+")
-            st.progress(metrics['oee']['oee']/100)
+            st.progress(get_progress_value(metrics['oee']['oee']))
         
         with col2:
             st.metric("Availability", f"{metrics['oee']['availability']}%", 
                      help="Production time vs Planned time")
-            st.progress(metrics['oee']['availability']/100)
+            st.progress(get_progress_value(metrics['oee']['availability']))
         
         with col3:
             st.metric("Performance", f"{metrics['oee']['performance']}%", 
                      help="Actual output vs Planned output")
-            st.progress(metrics['oee']['performance']/100)
+            st.progress(get_progress_value(metrics['oee']['performance']))
         
         with col4:
             st.metric("Quality", f"{metrics['oee']['quality']}%", 
                      help="Good units vs Total units")
-            st.progress(metrics['oee']['quality']/100)
+            st.progress(get_progress_value(metrics['oee']['quality']))
     
     with tab2:
         col1, col2, col3, col4 = st.columns(4)
@@ -1145,19 +1149,19 @@ def dashboard_page():
             fpy_color = get_color(metrics['first_pass_yield'], 95, 85)
             st.metric("First Pass Yield", f"{metrics['first_pass_yield']}%", 
                      help="Units passing quality first time")
-            st.progress(metrics['first_pass_yield']/100)
+            st.progress(get_progress_value(metrics['first_pass_yield']))
         
         with col2:
             scrap_color = get_color(100 - metrics['scrap_rate'], 99, 95)
             st.metric("Scrap Rate", f"{metrics['scrap_rate']}%", 
                      help="Percentage of scrapped units")
-            st.progress(1 - (metrics['scrap_rate']/100))
+            st.progress(get_progress_value(100 - metrics['scrap_rate']))
         
         with col3:
             rework_color = get_color(100 - metrics['rework_rate'], 98, 95)
             st.metric("Rework Rate", f"{metrics['rework_rate']}%", 
                      help="Percentage of units needing rework")
-            st.progress(1 - (metrics['rework_rate']/100))
+            st.progress(get_progress_value(100 - metrics['rework_rate']))
         
         with col4:
             st.metric("Cost of Poor Quality", f"${metrics['cost_of_poor_quality']:,.0f}", 
@@ -1177,13 +1181,13 @@ def dashboard_page():
             util_color = get_color(metrics['capacity_utilization'], 85, 70)
             st.metric("Capacity Utilization", f"{metrics['capacity_utilization']}%", 
                      help="How well capacity is being used")
-            st.progress(metrics['capacity_utilization']/100)
+            st.progress(get_progress_value(metrics['capacity_utilization']))
         
         with col4:
             otd_color = get_color(metrics['on_time_delivery'], 95, 85)
             st.metric("On-Time Delivery", f"{metrics['on_time_delivery']}%", 
                      help="Completed units vs Ordered units")
-            st.progress(metrics['on_time_delivery']/100)
+            st.progress(get_progress_value(metrics['on_time_delivery']))
     
     # Visualizations Section
     st.markdown("---")
