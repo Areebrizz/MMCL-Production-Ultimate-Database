@@ -898,7 +898,8 @@ def calculate_manufacturing_metrics(records):
 # Production Entry Page (Enhanced with new metrics)
 # -------------------------
 def production_entry_page():
-    update_activity()
+    update_activity()  # Update activity when page loads
+    
     st.header(f"📋 {st.session_state.department} Daily Production Entry")
     
     with st.form("production_entry_form", clear_on_submit=True):
@@ -932,7 +933,7 @@ def production_entry_page():
         submitted = st.form_submit_button("💾 Save Production Record")
         
         if submitted:
-            update_activity()
+            update_activity()  # Update activity when form is submitted
             
             # Calculate good units (actual production minus scrap)
             good_units = prod_actual - scrap
@@ -954,9 +955,9 @@ def production_entry_page():
                 "completed_quantity": completed_quantity,
                 "good_units": good_units,
                 "downtime_reason": downtime_reason,
-                "planned_hours": 8.0,  # Standard 8-hour shift
-                "labor_cost_per_hour": 25.0,  # Default value, can be configured
-                "material_cost_per_unit": 100.0,  # Default value, can be configured
+                "planned_hours": 8.0,
+                "labor_cost_per_hour": 25.0,
+                "material_cost_per_unit": 100.0,
                 "notes": notes,
                 "entered_by": st.session_state.username,
                 "department": st.session_state.department
@@ -969,6 +970,9 @@ def production_entry_page():
                                   response.data[0]["id"], 
                                   f"Created {st.session_state.department} record for {entry_date}")
                     st.success(f"✅ {st.session_state.department} record saved for {entry_date}, {shift} shift")
+                    # Add a small delay and then rerun to refresh the form
+                    time.sleep(0.5)
+                    st.rerun()
                 else:
                     st.error("❌ Failed to save data.")
             except Exception as e:
