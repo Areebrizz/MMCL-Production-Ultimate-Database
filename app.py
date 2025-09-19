@@ -632,7 +632,7 @@ def show_sidebar():
     with st.sidebar:
         st.title(f"MMCL Production Ultimate Database")
         st.markdown(f"**Welcome, {st.session_state.username}**")
-        st.markdown(f"*Role: {st.session_state.role}*")
+        st.markdown(f"*Role: {st.session_state.role*")
         if st.session_state.department:
             st.markdown(f"*Department: {st.session_state.department}*")
         st.markdown("---")
@@ -747,7 +747,7 @@ def profile_page():
         st.error("User not found!")
 
 # -------------------------
-# OEE Calculation Functions
+# Manufacturing Metrics Calculation Functions
 # -------------------------
 def calculate_oee(record):
     """
@@ -755,9 +755,8 @@ def calculate_oee(record):
     """
     try:
         # Availability = Actual Production Time / Planned Production Time
-        # Assuming 8 hours per shift as planned production time
-        planned_hours = 8
-        actual_hours = planned_hours - record.get('downtime_hours', 0)
+        planned_hours = record.get('planned_hours', 8)
+        actual_hours = planned_hours - record.get('downtime_hours', 0) - record.get('scheduled_downtime_hours', 0)
         availability = (actual_hours / planned_hours) * 100 if planned_hours > 0 else 0
         
         # Performance = (Actual Output / Ideal Output) * 100
@@ -788,8 +787,8 @@ def calculate_daily_oee(records):
     if not records:
         return {'availability': 0, 'performance': 0, 'quality': 0, 'oee': 0}
     
-    total_planned_hours = len(records) * 8  # 8 hours per shift
-    total_actual_hours = total_planned_hours - sum(record.get('downtime_hours', 0) for record in records)
+    total_planned_hours = sum(record.get('planned_hours', 8) for record in records)
+    total_actual_hours = total_planned_hours - sum(record.get('downtime_hours', 0) for record in records) - sum(record.get('scheduled_downtime_hours', 0) for record in records)
     
     # Weighted averages
     availability = (total_actual_hours / total_planned_hours) * 100 if total_planned_hours > 0 else 0
@@ -811,152 +810,96 @@ def calculate_daily_oee(records):
         'oee': round(oee, 1)
     }
 
-# -------------------------
-# Dashboard Page (Enhanced with OEE Analytics)
-# -------------------------
-def dashboard_page():
-    update_activity()
-    st.header("📊 Production Dashboard")
+def calculate_manufacturing_metrics(records):
+    """
+    Calculate comprehensive manufacturing metrics from production records
+    """
+    if not records:
+        return {}
     
-    # Date range filter with month selection option
-    col1, col2, col3 = st.columns([1, 1, 2])
+    df = pd.DataFrame(records)
     
-    with col1:
-        date_range = st.selectbox("View by", 
-                                ["Today", "This Week", "This Month", "Custom Range"])
+    # Basic calculations
+    total_planned_hours = sum(record.get('planned_hours', 8) for record in records)
+    total_actual_hours = total_planned_hours - sum(record.get('scheduled_downtime_hours', 0) for record in records)
+    total_unplanned_downtime = sum(record.get('downtime_hours', 0) for record in records)
     
-    with col2:
-        if date_range == "Custom Range":
-            start_date = st.date_input("Start Date", value=date.today().replace(day=1))
-            end_date = st.date_input("End Date", value=date.today())
-        else:
-            today = date.today()
-            if date_range == "Today":
-                start_date = today
-                end_date = today
-            elif date_range == "This Week":
-                start_date = today - timedelta(days=today.weekday())
-                end_date = start_date + timedelta(days=6)
-            else:  # This Month
-                start_date = today.replace(day=1)
-                end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    total_planned_units = sum(record.get('production_plan', 0) for record in records)
+    total_actual_units = sum(record.get('production_actual', 0) for record in records)
+    total_good_units = sum(record.get('good_units', 0) for record in records)
+    total_scrap = sum(record.get('scrap', 0) for record in records)
+    total_rework = sum(record.get('rework_units', 0) for record in records)
     
-    # Department filter
-    departments = ["All"] + list(pd.DataFrame(get_all_users())["department"].dropna().unique())
-    with col3:
-        department_filter = st.selectbox("Filter by Department", departments)
+    total_order_quantity = sum(record.get('order_quantity', 0) for record in records)
+    total_completed_quantity = sum(record.get('completed_quantity', 0) for record in records)
     
-    # Fetch production data
-    records = get_production_metrics(start_date, end_date, department_filter)
+    # Calculate metrics
+    # 1. OEE (already calculated)
+    oee_metrics = calculate_daily_oee(records)
     
-    if records:
-        df = pd.DataFrame(records)
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        
-        # Calculate overall OEE for the period
-        overall_oee = calculate_daily_oee(records)
-        
-        # KPI Metrics
-        st.subheader("📈 Overall Equipment Effectiveness (OEE)")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Availability", f"{overall_oee['availability']}%")
-        with col2:
-            st.metric("Performance", f"{overall_oee['performance']}%")
-        with col3:
-            st.metric("Quality", f"{overall_oee['quality']}%")
-        with col4:
-            st.metric("Overall OEE", f"{overall_oee['oee']}%", 
-                     delta_color="normal" if overall_oee['oee'] >= 85 else "inverse")
-        
-        # World-class OEE benchmarks info
-        st.info("💡 World-class OEE benchmark: 85%+ (Availability 90%, Performance 95%, Quality 99.9%)")
-        
-        # OEE Trend Chart
-        st.subheader("📈 OEE Trend Over Time")
-        
-        # Prepare data for trend chart
-        daily_oee = []
-        dates = []
-        
-        # Group by date and calculate daily OEE
-        unique_dates = df['date'].dt.date.unique()
-        for day in sorted(unique_dates):
-            day_records = [r for r in records if pd.to_datetime(r['date']).date() == day]
-            daily_oee.append(calculate_daily_oee(day_records))
-            dates.append(day)
-        
-        # Create trend DataFrame
-        trend_df = pd.DataFrame({
-            'date': dates,
-            'availability': [d['availability'] for d in daily_oee],
-            'performance': [d['performance'] for d in daily_oee],
-            'quality': [d['quality'] for d in daily_oee],
-            'oee': [d['oee'] for d in daily_oee]
-        })
-        
-        # Display trend chart
-        if not trend_df.empty:
-            chart_data = trend_df.set_index('date')
-            st.line_chart(chart_data[['availability', 'performance', 'quality', 'oee']])
-        
-        # Detailed OEE Analysis
-        st.subheader("🔍 Detailed OEE Analysis")
-        
-        tab1, tab2, tab3 = st.tabs(["Availability Analysis", "Performance Analysis", "Quality Analysis"])
-        
-        with tab1:
-            st.write("**Downtime Analysis**")
-            downtime_data = df[df['downtime_hours'] > 0]
-            if not downtime_data.empty:
-                downtime_by_reason = downtime_data.groupby('downtime_reason')['downtime_hours'].sum()
-                st.bar_chart(downtime_by_reason)
-            else:
-                st.success("✅ No downtime recorded in this period!")
-        
-        with tab2:
-            st.write("**Production vs Plan**")
-            performance_data = df[['date', 'production_plan', 'production_actual']].copy()
-            performance_data['date'] = pd.to_datetime(performance_data['date'])
-            performance_data = performance_data.set_index('date')
-            st.bar_chart(performance_data)
-        
-        with tab3:
-            st.write("**Quality Metrics**")
-            quality_data = df[['date', 'scrap']].copy()
-            quality_data['date'] = pd.to_datetime(quality_data['date'])
-            quality_data = quality_data.groupby(quality_data['date'].dt.date)['scrap'].sum()
-            st.bar_chart(quality_data)
-        
-        # OEE by Department (if multiple departments selected)
-        if department_filter == "All":
-            st.subheader("🏭 OEE by Department")
-            dept_oee = {}
-            for dept in df['department'].unique():
-                dept_records = [r for r in records if r['department'] == dept]
-                dept_oee[dept] = calculate_daily_oee(dept_records)['oee']
-            
-            dept_df = pd.DataFrame(list(dept_oee.items()), columns=['Department', 'OEE'])
-            st.bar_chart(dept_df.set_index('Department'))
-        
-        # Raw Data
-        with st.expander("📋 View Detailed Records"):
-            st.dataframe(df)
+    # 2. Takt Time
+    available_time = total_actual_hours * 60  # Convert to minutes
+    takt_time = available_time / total_planned_units if total_planned_units > 0 else 0
     
-    else:
-        st.info("No production records found for the selected period.")
+    # 3. Cycle Time (weighted average)
+    total_cycle_time = sum(record.get('cycle_time_minutes', 0) * record.get('production_actual', 0) 
+                          for record in records)
+    avg_cycle_time = total_cycle_time / total_actual_units if total_actual_units > 0 else 0
+    
+    # 4. Rework Rate
+    rework_rate = (total_rework / total_actual_units) * 100 if total_actual_units > 0 else 0
+    
+    # 5. Capacity Utilization
+    total_capacity = total_planned_hours * 60  # Total available minutes
+    utilized_capacity = (total_actual_units * avg_cycle_time) if avg_cycle_time > 0 else 0
+    capacity_utilization = (utilized_capacity / total_capacity) * 100 if total_capacity > 0 else 0
+    
+    # 6. First Pass Yield (FPY)
+    fpy = (total_good_units / total_actual_units) * 100 if total_actual_units > 0 else 0
+    
+    # 7. Rolled Throughput Yield (RTY) - assuming single process for simplicity
+    rty = fpy / 100  # For multi-process, this would be product of individual yields
+    
+    # 8. Scrap Rate
+    scrap_rate = (total_scrap / total_actual_units) * 100 if total_actual_units > 0 else 0
+    
+    # 9. On-Time Delivery (OTD)
+    otd = (total_completed_quantity / total_order_quantity) * 100 if total_order_quantity > 0 else 0
+    
+    # 10. Process Cycle Efficiency (simplified)
+    value_added_time = total_actual_units * avg_cycle_time
+    total_cycle_time = available_time
+    pce = (value_added_time / total_cycle_time) * 100 if total_cycle_time > 0 else 0
+    
+    # 11. Cost of Poor Quality (simplified)
+    labor_cost_per_hour = records[0].get('labor_cost_per_hour', 25) if records else 25
+    material_cost_per_unit = records[0].get('material_cost_per_unit', 100) if records else 100
+    copq = (total_scrap * material_cost_per_unit) + (total_rework * labor_cost_per_hour * (avg_cycle_time/60))
+    
+    return {
+        'takt_time': round(takt_time, 2),
+        'avg_cycle_time': round(avg_cycle_time, 2),
+        'rework_rate': round(rework_rate, 2),
+        'capacity_utilization': round(capacity_utilization, 2),
+        'first_pass_yield': round(fpy, 2),
+        'rolled_throughput_yield': round(rty * 100, 2),  # Convert back to percentage
+        'scrap_rate': round(scrap_rate, 2),
+        'on_time_delivery': round(otd, 2),
+        'process_cycle_efficiency': round(pce, 2),
+        'cost_of_poor_quality': round(copq, 2),
+        'oee': oee_metrics,
+        'total_units': total_actual_units,
+        'good_units': total_good_units,
+        'scrap_units': total_scrap,
+        'rework_units': total_rework
+    }
 
 # -------------------------
-# Production Entry Page (Updated with Live OEE)
+# Production Entry Page (Enhanced with new metrics)
 # -------------------------
 def production_entry_page():
     update_activity()
     st.header(f"📋 {st.session_state.department} Daily Production Entry")
-    
-    # Initialize session state for OEE if not exists
-    if 'oee_calc' not in st.session_state:
-        st.session_state.oee_calc = {'availability': 0, 'performance': 0, 'quality': 0, 'oee': 0}
     
     with st.form("production_entry_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -964,54 +907,36 @@ def production_entry_page():
         with col1:
             entry_date = st.date_input("Date", value=datetime.today())
             shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
-            manpower_avail = st.number_input("Manpower Available", min_value=0, step=1, value=0,
-                                            help="Number of workers actually present")
-            manpower_req = st.number_input("Manpower Required", min_value=0, step=1, value=0,
-                                          help="Number of workers needed as per plan")
+            manpower_avail = st.number_input("Manpower Available", min_value=0, step=1, value=0)
+            manpower_req = st.number_input("Manpower Required", min_value=0, step=1, value=0)
+            prod_plan = st.number_input("Production Plan (Units)", min_value=0, step=1, value=0)
+            prod_actual = st.number_input("Production Actual (Units)", min_value=0, step=1, value=0)
+            scrap = st.number_input("Scrap Units", min_value=0, step=1, value=0)
         
         with col2:
-            prod_plan = st.number_input("Production Plan", min_value=0, step=1, value=0,
-                                       help="Target production units for this shift")
-            prod_actual = st.number_input("Production Actual", min_value=0, step=1, value=0,
-                                         help="Actual production units achieved")
-            scrap = st.number_input("Scrap / Rework", min_value=0, step=1, value=0,
-                                   help="Number of defective units that need rework or scrap")
-            downtime_hours = st.number_input("Downtime Hours", min_value=0.0, step=0.25, value=0.0,
-                                            help="Total hours of downtime during shift")
+            rework_units = st.number_input("Rework Units", min_value=0, step=1, value=0,
+                                          help="Units that required rework but were eventually salvaged")
+            cycle_time = st.number_input("Average Cycle Time (minutes)", min_value=0.0, step=0.1, value=0.0,
+                                       help="Average time to complete one unit")
+            downtime_hours = st.number_input("Unplanned Downtime Hours", min_value=0.0, step=0.25, value=0.0)
+            scheduled_downtime = st.number_input("Scheduled Downtime Hours", min_value=0.0, step=0.25, value=0.0,
+                                               help="Planned downtime for breaks, maintenance, etc.")
+            order_quantity = st.number_input("Order Quantity", min_value=0, step=1, value=prod_plan,
+                                           help="Total units ordered for this production run")
+            completed_quantity = st.number_input("Completed Quantity", min_value=0, step=1, value=prod_actual,
+                                               help="Units completed and ready for shipment")
         
         downtime_reason = st.text_input("Downtime Reason (if any)")
         notes = st.text_area("Notes / Remarks")
         
-        # Live OEE Calculation
-        if st.form_submit_button("Calculate Live OEE", type="secondary"):
-            temp_record = {
-                'production_plan': prod_plan,
-                'production_actual': prod_actual,
-                'scrap': scrap,
-                'downtime_hours': downtime_hours
-            }
-            st.session_state.oee_calc = calculate_oee(temp_record)
-        
-        # Display OEE Metrics
-        st.markdown("### 📊 Live OEE Calculation")
-        oee_col1, oee_col2, oee_col3, oee_col4 = st.columns(4)
-        
-        with oee_col1:
-            st.metric("Availability", f"{st.session_state.oee_calc['availability']}%")
-        with oee_col2:
-            st.metric("Performance", f"{st.session_state.oee_calc['performance']}%")
-        with oee_col3:
-            st.metric("Quality", f"{st.session_state.oee_calc['quality']}%")
-        with oee_col4:
-            st.metric("OEE", f"{st.session_state.oee_calc['oee']}%", 
-                     delta=f"{st.session_state.oee_calc['oee'] - 85}%"
-                     if st.session_state.oee_calc['oee'] != 0 else None,
-                     delta_color="normal")
-        
-        submitted = st.form_submit_button("💾 Save Record")
+        submitted = st.form_submit_button("💾 Save Production Record")
         
         if submitted:
             update_activity()
+            
+            # Calculate good units (actual production minus scrap)
+            good_units = prod_actual - scrap
+            
             row = {
                 "timestamp": datetime.utcnow().isoformat(),
                 "date": entry_date.isoformat(),
@@ -1021,12 +946,17 @@ def production_entry_page():
                 "production_plan": prod_plan,
                 "production_actual": prod_actual,
                 "scrap": scrap,
+                "rework_units": rework_units,
+                "cycle_time_minutes": cycle_time,
                 "downtime_hours": downtime_hours,
+                "scheduled_downtime_hours": scheduled_downtime,
+                "order_quantity": order_quantity,
+                "completed_quantity": completed_quantity,
+                "good_units": good_units,
                 "downtime_reason": downtime_reason,
-                "availability": st.session_state.oee_calc['availability'],
-                "performance": st.session_state.oee_calc['performance'],
-                "quality": st.session_state.oee_calc['quality'],
-                "oee": st.session_state.oee_calc['oee'],
+                "planned_hours": 8.0,  # Standard 8-hour shift
+                "labor_cost_per_hour": 25.0,  # Default value, can be configured
+                "material_cost_per_unit": 100.0,  # Default value, can be configured
                 "notes": notes,
                 "entered_by": st.session_state.username,
                 "department": st.session_state.department
@@ -1039,8 +969,6 @@ def production_entry_page():
                                   response.data[0]["id"], 
                                   f"Created {st.session_state.department} record for {entry_date}")
                     st.success(f"✅ {st.session_state.department} record saved for {entry_date}, {shift} shift")
-                    # Reset OEE calculation
-                    st.session_state.oee_calc = {'availability': 0, 'performance': 0, 'quality': 0, 'oee': 0}
                 else:
                     st.error("❌ Failed to save data.")
             except Exception as e:
@@ -1115,14 +1043,12 @@ def quality_data_entry_page():
         except Exception as e:
             st.error(f"⚠️ Error: {e}")
 
-
-
 # -------------------------
-# Dashboard Page (Enhanced with OEE Analytics)
+# Dashboard Page (Enhanced with Manufacturing Analytics)
 # -------------------------
 def dashboard_page():
     update_activity()
-    st.header("📊 Production Dashboard")
+    st.header("📊 Manufacturing Performance Dashboard")
     
     # Date range filter with month selection option
     col1, col2, col3 = st.columns([1, 1, 2])
@@ -1156,95 +1082,152 @@ def dashboard_page():
     records = get_production_metrics(start_date, end_date, department_filter)
     
     if records:
+        # Calculate all manufacturing metrics
+        metrics = calculate_manufacturing_metrics(records)
+        
+        # Display Key Performance Indicators
+        st.subheader("🎯 Key Performance Indicators")
+        
+        # Row 1: OEE and Time-based metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Overall OEE", f"{metrics['oee']['oee']}%", 
+                     delta_color="normal" if metrics['oee']['oee'] >= 85 else "inverse")
+        with col2:
+            st.metric("Takt Time", f"{metrics['takt_time']} min/unit")
+        with col3:
+            st.metric("Cycle Time", f"{metrics['avg_cycle_time']} min/unit")
+        with col4:
+            st.metric("Capacity Utilization", f"{metrics['capacity_utilization']}%")
+        
+        # Row 2: Quality metrics
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
+            st.metric("First Pass Yield", f"{metrics['first_pass_yield']}%")
+        with col6:
+            st.metric("Rework Rate", f"{metrics['rework_rate']}%")
+        with col7:
+            st.metric("Scrap Rate", f"{metrics['scrap_rate']}%")
+        with col8:
+            st.metric("On-Time Delivery", f"{metrics['on_time_delivery']}%")
+        
+        # Row 3: Advanced metrics
+        col9, col10, col11, col12 = st.columns(4)
+        with col9:
+            st.metric("Rolled Throughput Yield", f"{metrics['rolled_throughput_yield']}%")
+        with col10:
+            st.metric("Process Cycle Efficiency", f"{metrics['process_cycle_efficiency']}%")
+        with col11:
+            st.metric("Cost of Poor Quality", f"${metrics['cost_of_poor_quality']:,.0f}")
+        with col12:
+            efficiency_ratio = metrics['takt_time'] / metrics['avg_cycle_time'] if metrics['avg_cycle_time'] > 0 else 0
+            st.metric("Efficiency Ratio", f"{efficiency_ratio:.2f}")
+        
+        # Detailed Analysis Tabs
+        st.subheader("📈 Detailed Analysis")
+        
+        tabs = st.tabs(["OEE Analysis", "Quality Metrics", "Time Analysis", "Cost Analysis"])
+        
         df = pd.DataFrame(records)
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         
-        # Calculate overall OEE for the period
-        overall_oee = calculate_daily_oee(records)
-        
-        # KPI Metrics
-        st.subheader("📈 Overall Equipment Effectiveness (OEE)")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Availability", f"{overall_oee['availability']}%")
-        with col2:
-            st.metric("Performance", f"{overall_oee['performance']}%")
-        with col3:
-            st.metric("Quality", f"{overall_oee['quality']}%")
-        with col4:
-            st.metric("Overall OEE", f"{overall_oee['oee']}%", 
-                     delta_color="normal" if overall_oee['oee'] >= 85 else "inverse")
-        
-        # World-class OEE benchmarks info
-        st.info("💡 World-class OEE benchmark: 85%+ (Availability 90%, Performance 95%, Quality 99.9%)")
-        
-        # OEE Trend Chart
-        st.subheader("📈 OEE Trend Over Time")
-        
-        # Prepare data for trend chart
-        daily_oee = []
-        dates = []
-        
-        # Group by date and calculate daily OEE
-        unique_dates = df['date'].dt.date.unique()
-        for day in sorted(unique_dates):
-            day_records = [r for r in records if pd.to_datetime(r['date']).date() == day]
-            daily_oee.append(calculate_daily_oee(day_records))
-            dates.append(day)
-        
-        # Create trend DataFrame
-        trend_df = pd.DataFrame({
-            'date': dates,
-            'availability': [d['availability'] for d in daily_oee],
-            'performance': [d['performance'] for d in daily_oee],
-            'quality': [d['quality'] for d in daily_oee],
-            'oee': [d['oee'] for d in daily_oee]
-        })
-        
-        # Display trend chart
-        if not trend_df.empty:
-            chart_data = trend_df.set_index('date')
-            st.line_chart(chart_data[['availability', 'performance', 'quality', 'oee']])
-        
-        # Detailed OEE Analysis
-        st.subheader("🔍 Detailed OEE Analysis")
-        
-        tab1, tab2, tab3 = st.tabs(["Availability Analysis", "Performance Analysis", "Quality Analysis"])
-        
-        with tab1:
-            st.write("**Downtime Analysis**")
-            downtime_data = df[df['downtime_hours'] > 0]
-            if not downtime_data.empty:
-                downtime_by_reason = downtime_data.groupby('downtime_reason')['downtime_hours'].sum()
-                st.bar_chart(downtime_by_reason)
-            else:
-                st.success("✅ No downtime recorded in this period!")
-        
-        with tab2:
-            st.write("**Production vs Plan**")
-            performance_data = df[['date', 'production_plan', 'production_actual']].copy()
-            performance_data['date'] = pd.to_datetime(performance_data['date'])
-            performance_data = performance_data.set_index('date')
-            st.bar_chart(performance_data)
-        
-        with tab3:
-            st.write("**Quality Metrics**")
-            quality_data = df[['date', 'scrap']].copy()
-            quality_data['date'] = pd.to_datetime(quality_data['date'])
-            quality_data = quality_data.groupby(quality_data['date'].dt.date)['scrap'].sum()
-            st.bar_chart(quality_data)
-        
-        # OEE by Department (if multiple departments selected)
-        if department_filter == "All":
-            st.subheader("🏭 OEE by Department")
-            dept_oee = {}
-            for dept in df['department'].unique():
-                dept_records = [r for r in records if r['department'] == dept]
-                dept_oee[dept] = calculate_daily_oee(dept_records)['oee']
+        with tabs[0]:  # OEE Analysis
+            st.write("**OEE Components Trend**")
+            daily_oee = df.groupby(df['date'].dt.date).apply(lambda x: calculate_daily_oee(x.to_dict('records')))
+            daily_df = pd.DataFrame(daily_oee.tolist(), index=daily_oee.index)
+            st.line_chart(daily_df[['availability', 'performance', 'quality', 'oee']])
             
-            dept_df = pd.DataFrame(list(dept_oee.items()), columns=['Department', 'OEE'])
-            st.bar_chart(dept_df.set_index('Department'))
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Availability Loss Causes**")
+                downtime_data = df[df['downtime_hours'] > 0]
+                if not downtime_data.empty:
+                    downtime_by_reason = downtime_data.groupby('downtime_reason')['downtime_hours'].sum()
+                    st.bar_chart(downtime_by_reason)
+            
+            with col2:
+                st.write("**Performance vs Plan**")
+                perf_data = df[['date', 'production_plan', 'production_actual']].copy()
+                perf_data = perf_data.set_index('date')
+                st.bar_chart(perf_data)
+        
+        with tabs[1]:  # Quality Metrics
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Quality Trends**")
+                quality_data = df[['date', 'scrap', 'rework_units']].copy()
+                quality_data = quality_data.groupby('date').sum()
+                st.area_chart(quality_data)
+            
+            with col2:
+                st.write("**Defect Analysis**")
+                defect_data = {
+                    'Good Units': metrics['good_units'],
+                    'Scrap Units': metrics['scrap_units'],
+                    'Rework Units': metrics['rework_units']
+                }
+                st.bar_chart(pd.Series(defect_data))
+        
+        with tabs[2]:  # Time Analysis
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Time Distribution**")
+                time_data = {
+                    'Value-Added': metrics['total_units'] * metrics['avg_cycle_time'],
+                    'Unplanned Downtime': sum(r.get('downtime_hours', 0) * 60 for r in records),
+                    'Scheduled Downtime': sum(r.get('scheduled_downtime_hours', 0) * 60 for r in records)
+                }
+                st.bar_chart(pd.Series(time_data))
+            
+            with col2:
+                st.write("**Cycle Time Distribution**")
+                cycle_times = [r.get('cycle_time_minutes', 0) for r in records if r.get('cycle_time_minutes', 0) > 0]
+                if cycle_times:
+                    st.bar_chart(pd.Series(cycle_times))
+        
+        with tabs[3]:  # Cost Analysis
+            st.write("**Cost Breakdown**")
+            material_cost = metrics['total_units'] * 100  # Assuming $100 material cost per unit
+            labor_cost = sum(r.get('planned_hours', 8) * 25 for r in records)  # Assuming $25 labor cost per hour
+            quality_cost = metrics['cost_of_poor_quality']
+            
+            cost_data = {
+                'Material Cost': material_cost,
+                'Labor Cost': labor_cost,
+                'Quality Cost': quality_cost
+            }
+            st.bar_chart(pd.Series(cost_data))
+            
+            st.write(f"**Quality Cost as % of Total:** {(quality_cost/(material_cost + labor_cost + quality_cost))*100:.1f}%")
+        
+        # Benchmark Information
+        st.subheader("🏆 Performance Benchmarks")
+        benchmark_col1, benchmark_col2, benchmark_col3 = st.columns(3)
+        
+        with benchmark_col1:
+            st.info("""
+            **World-Class Benchmarks:**
+            - OEE: 85%+
+            - First Pass Yield: 99%+
+            - Scrap Rate: <1%
+            - Rework Rate: <2%
+            """)
+        
+        with benchmark_col2:
+            st.info("""
+            **Time Metrics:**
+            - Cycle Time ≤ Takt Time
+            - Capacity Utilization: 85-90%
+            - On-Time Delivery: 95%+
+            """)
+        
+        with benchmark_col3:
+            st.info("""
+            **Cost Targets:**
+            - CoPQ: <5% of revenue
+            - Process Cycle Efficiency: >25%
+            - Efficiency Ratio: ≥1.0
+            """)
         
         # Raw Data
         with st.expander("📋 View Detailed Records"):
@@ -1252,6 +1235,7 @@ def dashboard_page():
     
     else:
         st.info("No production records found for the selected period.")
+
 # -------------------------
 # Access Request Page
 # -------------------------
