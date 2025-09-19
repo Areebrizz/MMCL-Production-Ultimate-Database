@@ -1052,13 +1052,48 @@ def quality_data_entry_page():
 # -------------------------
 def dashboard_page():
     update_activity()
-    st.header("📊 Manufacturing Performance Dashboard")
+    st.header("🏭 Manufacturing Performance Dashboard")
+    
+    # Custom CSS for better styling
+    st.markdown("""
+    <style>
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid #4CAF50;
+        margin-bottom: 10px;
+    }
+    .metric-card-warning {
+        border-left: 4px solid #FF9800;
+    }
+    .metric-card-danger {
+        border-left: 4px solid #F44336;
+    }
+    .progress-container {
+        background-color: #e9ecef;
+        border-radius: 5px;
+        margin-top: 5px;
+    }
+    .progress-bar {
+        height: 8px;
+        border-radius: 5px;
+        background-color: #4CAF50;
+        transition: width 0.3s ease;
+    }
+    .kpi-header {
+        color: #2c3e50;
+        font-weight: 600;
+        margin-bottom: 5px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
     # Date range filter
     col1, col2, col3 = st.columns([1, 1, 2])
     
     with col1:
-        date_range = st.selectbox("View by", 
+        date_range = st.selectbox("📅 Date Range", 
                                 ["Today", "This Week", "This Month", "Last Week", "Last Month", "Custom Range"])
     
     with col2:
@@ -1087,13 +1122,13 @@ def dashboard_page():
     # Department filter
     departments = ["All"] + list(pd.DataFrame(get_all_users())["department"].dropna().unique())
     with col3:
-        department_filter = st.selectbox("Filter by Department", departments)
+        department_filter = st.selectbox("🏭 Filter Department", departments)
     
     # Fetch production data
     records = get_production_metrics(start_date, end_date, department_filter)
     
     if not records:
-        st.info("No production records found for the selected period.")
+        st.info("📭 No production records found for the selected period.")
         return
     
     # Calculate all manufacturing metrics
@@ -1101,100 +1136,173 @@ def dashboard_page():
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     
-    # Safe progress value function to clamp between 0 and 1
-    def get_progress_value(value):
-        return max(0, min(1, value / 100))
+    # Helper functions for visual indicators
+    def get_progress_value(value, max_value=100):
+        return max(0, min(1, value / max_value))
     
-    # Color coding for metrics
-    def get_color(value, threshold_good=85, threshold_ok=70):
-        if value >= threshold_good:
-            return "green"
-        elif value >= threshold_ok:
-            return "orange"
-        else:
-            return "red"
+    def get_color_class(value, metric_type="positive"):
+        """Return CSS class based on value and metric type"""
+        if metric_type == "positive":  # Higher is better (OEE, FPY, etc.)
+            if value >= 85: return ""
+            elif value >= 70: return "metric-card-warning"
+            else: return "metric-card-danger"
+        else:  # Lower is better (Scrap, Rework, etc.)
+            if value <= 5: return ""
+            elif value <= 15: return "metric-card-warning"
+            else: return "metric-card-danger"
     
-    # Main KPI Cards - Much cleaner layout
-    st.subheader("🎯 Key Performance Indicators")
+    def render_metric_card(title, value, unit="%", progress_value=0, color_class="", help_text=""):
+        """Render a beautiful metric card with progress bar"""
+        st.markdown(f"""
+        <div class="metric-card {color_class}">
+            <div class="kpi-header">{title}</div>
+            <div style="font-size: 24px; font-weight: bold; color: #2c3e50;">
+                {value}{unit}
+            </div>
+            <div class="progress-container">
+                <div class="progress-bar" style="width: {progress_value*100}%;"></div>
+            </div>
+            <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">{help_text}</div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Use tabs for different metric categories
-    tab1, tab2, tab3 = st.tabs(["Overall Performance", "Quality Metrics", "Time & Efficiency"])
+    # Main KPI Section
+    st.markdown("---")
+    st.subheader("📊 Key Performance Indicators")
     
-    with tab1:
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            oee_color = get_color(metrics['oee']['oee'])
-            st.metric("Overall OEE", f"{metrics['oee']['oee']}%", 
-                     delta_color="normal", help="World-class: 85%+")
-            st.progress(get_progress_value(metrics['oee']['oee']))
-        
-        with col2:
-            st.metric("Availability", f"{metrics['oee']['availability']}%", 
-                     help="Production time vs Planned time")
-            st.progress(get_progress_value(metrics['oee']['availability']))
-        
-        with col3:
-            st.metric("Performance", f"{metrics['oee']['performance']}%", 
-                     help="Actual output vs Planned output")
-            st.progress(get_progress_value(metrics['oee']['performance']))
-        
-        with col4:
-            st.metric("Quality", f"{metrics['oee']['quality']}%", 
-                     help="Good units vs Total units")
-            st.progress(get_progress_value(metrics['oee']['quality']))
+    # Row 1: OEE Components
+    col1, col2, col3, col4 = st.columns(4)
     
-    with tab2:
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            fpy_color = get_color(metrics['first_pass_yield'], 95, 85)
-            st.metric("First Pass Yield", f"{metrics['first_pass_yield']}%", 
-                     help="Units passing quality first time")
-            st.progress(get_progress_value(metrics['first_pass_yield']))
-        
-        with col2:
-            scrap_color = get_color(100 - metrics['scrap_rate'], 99, 95)
-            st.metric("Scrap Rate", f"{metrics['scrap_rate']}%", 
-                     help="Percentage of scrapped units")
-            st.progress(get_progress_value(100 - metrics['scrap_rate']))
-        
-        with col3:
-            rework_color = get_color(100 - metrics['rework_rate'], 98, 95)
-            st.metric("Rework Rate", f"{metrics['rework_rate']}%", 
-                     help="Percentage of units needing rework")
-            st.progress(get_progress_value(100 - metrics['rework_rate']))
-        
-        with col4:
-            st.metric("Cost of Poor Quality", f"${metrics['cost_of_poor_quality']:,.0f}", 
-                     help="Financial impact of quality issues")
+    with col1:
+        render_metric_card(
+            "Overall OEE", 
+            f"{metrics['oee']['oee']:.1f}", 
+            progress_value=get_progress_value(metrics['oee']['oee']),
+            color_class=get_color_class(metrics['oee']['oee'], "positive"),
+            help_text="World-class: 85%+"
+        )
     
-    with tab3:
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Takt Time", f"{metrics['takt_time']:.1f} min", 
-                     help="Available time / Customer demand")
-        
-        with col2:
-            st.metric("Cycle Time", f"{metrics['avg_cycle_time']:.1f} min", 
-                     help="Average time per unit")
-        
-        with col3:
-            util_color = get_color(metrics['capacity_utilization'], 85, 70)
-            st.metric("Capacity Utilization", f"{metrics['capacity_utilization']}%", 
-                     help="How well capacity is being used")
-            st.progress(get_progress_value(metrics['capacity_utilization']))
-        
-        with col4:
-            otd_color = get_color(metrics['on_time_delivery'], 95, 85)
-            st.metric("On-Time Delivery", f"{metrics['on_time_delivery']}%", 
-                     help="Completed units vs Ordered units")
-            st.progress(get_progress_value(metrics['on_time_delivery']))
+    with col2:
+        render_metric_card(
+            "Availability", 
+            f"{metrics['oee']['availability']:.1f}", 
+            progress_value=get_progress_value(metrics['oee']['availability']),
+            color_class=get_color_class(metrics['oee']['availability'], "positive"),
+            help_text="Production time vs Planned time"
+        )
+    
+    with col3:
+        render_metric_card(
+            "Performance", 
+            f"{metrics['oee']['performance']:.1f}", 
+            progress_value=get_progress_value(metrics['oee']['performance']),
+            color_class=get_color_class(metrics['oee']['performance'], "positive"),
+            help_text="Actual output vs Planned output"
+        )
+    
+    with col4:
+        render_metric_card(
+            "Quality", 
+            f"{metrics['oee']['quality']:.1f}", 
+            progress_value=get_progress_value(metrics['oee']['quality']),
+            color_class=get_color_class(metrics['oee']['quality'], "positive"),
+            help_text="Good units vs Total units"
+        )
+    
+    # Row 2: Quality Metrics
+    col5, col6, col7, col8 = st.columns(4)
+    
+    with col5:
+        render_metric_card(
+            "First Pass Yield", 
+            f"{metrics['first_pass_yield']:.1f}", 
+            progress_value=get_progress_value(metrics['first_pass_yield']),
+            color_class=get_color_class(metrics['first_pass_yield'], "positive"),
+            help_text="Units passing quality first time"
+        )
+    
+    with col6:
+        # For scrap rate, we want to show inverse progress (lower is better)
+        scrap_progress = 1 - get_progress_value(metrics['scrap_rate'])
+        render_metric_card(
+            "Scrap Rate", 
+            f"{metrics['scrap_rate']:.1f}", 
+            progress_value=scrap_progress,
+            color_class=get_color_class(metrics['scrap_rate'], "negative"),
+            help_text="Lower is better"
+        )
+    
+    with col7:
+        # For rework rate, we want to show inverse progress (lower is better)
+        rework_progress = 1 - get_progress_value(metrics['rework_rate'])
+        render_metric_card(
+            "Rework Rate", 
+            f"{metrics['rework_rate']:.1f}", 
+            progress_value=rework_progress,
+            color_class=get_color_class(metrics['rework_rate'], "negative"),
+            help_text="Lower is better"
+        )
+    
+    with col8:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="kpi-header">Cost of Poor Quality</div>
+            <div style="font-size: 24px; font-weight: bold; color: #2c3e50;">
+                ${metrics['cost_of_poor_quality']:,.0f}
+            </div>
+            <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">Financial impact of quality issues</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Row 3: Time & Efficiency Metrics
+    col9, col10, col11, col12 = st.columns(4)
+    
+    with col9:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="kpi-header">Takt Time</div>
+            <div style="font-size: 24px; font-weight: bold; color: #2c3e50;">
+                {metrics['takt_time']:.1f} min
+            </div>
+            <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">Available time / Customer demand</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col10:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="kpi-header">Cycle Time</div>
+            <div style="font-size: 24px; font-weight: bold; color: #2c3e50;">
+                {metrics['avg_cycle_time']:.1f} min
+            </div>
+            <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">Average time per unit</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col11:
+        render_metric_card(
+            "Capacity Utilization", 
+            f"{metrics['capacity_utilization']:.1f}", 
+            progress_value=get_progress_value(metrics['capacity_utilization']),
+            color_class=get_color_class(metrics['capacity_utilization'], "positive"),
+            help_text="Optimal: 85-90%"
+        )
+    
+    with col12:
+        render_metric_card(
+            "On-Time Delivery", 
+            f"{metrics['on_time_delivery']:.1f}", 
+            progress_value=get_progress_value(metrics['on_time_delivery']),
+            color_class=get_color_class(metrics['on_time_delivery'], "positive"),
+            help_text="Completed vs Ordered units"
+        )
     
     # Visualizations Section
     st.markdown("---")
-    st.subheader("📈 Performance Trends")
+    st.subheader("📈 Performance Trends & Analytics")
     
     # Create tabs for different visualizations
-    viz_tab1, viz_tab2, viz_tab3 = st.tabs(["OEE Trend", "Production Volume", "Quality Metrics"])
+    viz_tab1, viz_tab2, viz_tab3, viz_tab4 = st.tabs(["OEE Trend", "Production Volume", "Quality Metrics", "Efficiency"])
     
     with viz_tab1:
         # OEE Trend Chart
@@ -1213,7 +1321,8 @@ def dashboard_page():
         
         if daily_data:
             trend_df = pd.DataFrame(daily_data).set_index('date')
-            st.line_chart(trend_df[['oee', 'availability', 'performance', 'quality']])
+            st.area_chart(trend_df[['availability', 'performance', 'quality']], use_container_width=True)
+            st.line_chart(trend_df[['oee']], use_container_width=True)
         else:
             st.info("No daily data available for trend analysis")
     
@@ -1225,7 +1334,11 @@ def dashboard_page():
                 'production_actual': 'sum'
             }).reset_index()
             production_data = production_data.set_index('date')
-            st.bar_chart(production_data[['production_plan', 'production_actual']])
+            st.bar_chart(production_data[['production_plan', 'production_actual']], use_container_width=True)
+            
+            # Production efficiency
+            production_data['efficiency'] = (production_data['production_actual'] / production_data['production_plan']) * 100
+            st.line_chart(production_data[['efficiency']], use_container_width=True)
         else:
             st.info("No production data available")
     
@@ -1234,18 +1347,40 @@ def dashboard_page():
         if not df.empty:
             quality_data = df.groupby('date').agg({
                 'scrap': 'sum',
-                'rework_units': 'sum'
+                'rework_units': 'sum',
+                'production_actual': 'sum'
             }).reset_index()
             quality_data = quality_data.set_index('date')
-            st.area_chart(quality_data[['scrap', 'rework_units']])
+            quality_data['scrap_rate'] = (quality_data['scrap'] / quality_data['production_actual']) * 100
+            quality_data['rework_rate'] = (quality_data['rework_units'] / quality_data['production_actual']) * 100
+            
+            st.area_chart(quality_data[['scrap', 'rework_units']], use_container_width=True)
+            st.line_chart(quality_data[['scrap_rate', 'rework_rate']], use_container_width=True)
         else:
             st.info("No quality data available")
     
+    with viz_tab4:
+        # Efficiency metrics
+        if not df.empty:
+            efficiency_data = df.groupby('date').agg({
+                'cycle_time_minutes': 'mean',
+                'downtime_hours': 'sum'
+            }).reset_index()
+            efficiency_data = efficiency_data.set_index('date')
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.line_chart(efficiency_data[['cycle_time_minutes']], use_container_width=True)
+            with col2:
+                st.bar_chart(efficiency_data[['downtime_hours']], use_container_width=True)
+        else:
+            st.info("No efficiency data available")
+    
     # Summary Statistics
     st.markdown("---")
-    st.subheader("📋 Summary Statistics")
+    st.subheader("📋 Performance Summary")
     
-    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
     
     with summary_col1:
         st.metric("Total Units Produced", f"{metrics['total_units']:,}")
@@ -1261,18 +1396,28 @@ def dashboard_page():
         st.metric("Total Downtime Hours", f"{total_downtime:.1f}")
         st.metric("Number of Shifts", f"{total_shifts}")
     
+    with summary_col4:
+        avg_cycle = df['cycle_time_minutes'].mean() if 'cycle_time_minutes' in df.columns else 0
+        avg_downtime = df['downtime_hours'].mean() if 'downtime_hours' in df.columns else 0
+        st.metric("Avg Cycle Time", f"{avg_cycle:.1f} min")
+        st.metric("Avg Downtime", f"{avg_downtime:.1f} hrs")
+    
     # Raw Data Expandable Section
-    with st.expander("📊 View Raw Data"):
-        st.dataframe(df.sort_values('date', ascending=False))
+    with st.expander("📊 View Detailed Data Table"):
+        display_df = df.sort_values('date', ascending=False)
+        display_df = display_df[['date', 'shift', 'department', 'production_plan', 'production_actual', 
+                               'scrap', 'rework_units', 'cycle_time_minutes', 'downtime_hours']]
+        st.dataframe(display_df, use_container_width=True)
     
     # Export Option
-    if st.button("📥 Export Data to CSV"):
+    if st.button("📥 Export Data to CSV", use_container_width=True):
         csv = df.to_csv(index=False)
         st.download_button(
-            label="Download CSV",
+            label="Download CSV Report",
             data=csv,
-            file_name=f"production_data_{start_date}_{end_date}.csv",
-            mime="text/csv"
+            file_name=f"production_report_{start_date}_{end_date}.csv",
+            mime="text/csv",
+            use_container_width=True
         )
 # -------------------------
 # Access Request Page
