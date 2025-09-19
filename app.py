@@ -632,7 +632,7 @@ def show_sidebar():
     with st.sidebar:
         st.title(f"MMCL Production Ultimate Database")
         st.markdown(f"**Welcome, {st.session_state.username}**")
-        st.markdown(f"*Role: {st.session_state.role*")
+        st.markdown(f"*Role: {st.session_state.role}*")
         if st.session_state.department:
             st.markdown(f"*Department: {st.session_state.department}*")
         st.markdown("---")
