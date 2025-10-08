@@ -1187,45 +1187,61 @@ def dashboard_page():
     
     # Helper functions for enhanced UI
     def get_performance_badge(value, metric_type="positive"):
-        """Return performance badge based on value"""
-        if metric_type == "positive":  # Higher is better
-            if value >= 85: return "Excellent", "badge-excellent"
-            elif value >= 70: return "Good", "badge-good"
-            elif value >= 50: return "Fair", "badge-warning"
-            else: return "Poor", "badge-poor"
-        else:  # Lower is better
-            if value <= 5: return "Excellent", "badge-excellent"
-            elif value <= 15: return "Good", "badge-good"
-            elif value <= 25: return "Fair", "badge-warning"
-            else: return "Poor", "badge-poor"
+    """Return performance badge based on value"""
+    # Ensure value is numeric for comparison
+    try:
+        numeric_value = float(value)
+    except (ValueError, TypeError):
+        return "N/A", "badge-warning"
     
-    def render_enhanced_metric(title, value, unit="%", progress_value=0, metric_type="positive", help_text=""):
-        """Render enhanced metric card with performance badge"""
-        badge_text, badge_class = get_performance_badge(value, metric_type)
-        
-        progress_color = "#2ecc71"  # Green
+    if metric_type == "positive":  # Higher is better
+        if numeric_value >= 85: return "Excellent", "badge-excellent"
+        elif numeric_value >= 70: return "Good", "badge-good"
+        elif numeric_value >= 50: return "Fair", "badge-warning"
+        else: return "Poor", "badge-poor"
+    else:  # Lower is better
+        if numeric_value <= 5: return "Excellent", "badge-excellent"
+        elif numeric_value <= 15: return "Good", "badge-good"
+        elif numeric_value <= 25: return "Fair", "badge-warning"
+        else: return "Poor", "badge-poor"
+    
+ def render_enhanced_metric(title, value, unit="%", progress_value=0, metric_type="positive", help_text=""):
+    """Render enhanced metric card with performance badge"""
+    badge_text, badge_class = get_performance_badge(value, metric_type)
+    
+    # Ensure progress_value is numeric and within bounds
+    try:
+        safe_progress = max(0, min(1, float(progress_value)))
+    except (ValueError, TypeError):
+        safe_progress = 0
+    
+    progress_color = "#2ecc71"  # Green
+    try:
+        numeric_value = float(value)
         if metric_type == "positive":
-            if value < 50: progress_color = "#e74c3c"
-            elif value < 70: progress_color = "#f39c12"
-            elif value < 85: progress_color = "#3498db"
+            if numeric_value < 50: progress_color = "#e74c3c"
+            elif numeric_value < 70: progress_color = "#f39c12"
+            elif numeric_value < 85: progress_color = "#3498db"
         else:
-            if value > 25: progress_color = "#e74c3c"
-            elif value > 15: progress_color = "#f39c12"
-            elif value > 5: progress_color = "#3498db"
-        
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label">{title}</div>
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-                <div class="metric-value">{value}{unit}</div>
-                <span class="kpi-badge {badge_class}">{badge_text}</span>
-            </div>
-            <div class="progress-bar-container">
-                <div class="progress-bar" style="width: {progress_value*100}%; background: {progress_color};"></div>
-            </div>
-            <div style="font-size: 0.8rem; color: #7f8c8d;">{help_text}</div>
+            if numeric_value > 25: progress_color = "#e74c3c"
+            elif numeric_value > 15: progress_color = "#f39c12"
+            elif numeric_value > 5: progress_color = "#3498db"
+    except (ValueError, TypeError):
+        progress_color = "#bdc3c7"  # Gray for invalid values
+    
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-label">{title}</div>
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div class="metric-value">{value}{unit}</div>
+            <span class="kpi-badge {badge_class}">{badge_text}</span>
         </div>
-        """, unsafe_allow_html=True)
+        <div class="progress-bar-container">
+            <div class="progress-bar" style="width: {safe_progress*100}%; background: {progress_color};"></div>
+        </div>
+        <div style="font-size: 0.8rem; color: #7f8c8d;">{help_text}</div>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Main KPI Section - OEE and Core Metrics
     st.markdown('<div class="section-header">📊 Overall Equipment Effectiveness (OEE)</div>', unsafe_allow_html=True)
