@@ -4,6 +4,9 @@ from supabase import create_client, Client
 from datetime import datetime, date, timedelta
 import time
 import bcrypt
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 
 # -------------------------
 # Page Config
@@ -359,6 +362,7 @@ def get_pending_users():
     except Exception as e:
         st.error(f"Error fetching pending users: {str(e)}")
         return []
+
 # -------------------------
 # Production Line Tracking Functions
 # -------------------------
@@ -444,6 +448,7 @@ def complete_vehicle(vehicle_id):
     except Exception as e:
         st.error(f"Error completing vehicle: {str(e)}")
         return False
+
 # -------------------------
 # Pre-defined God Admin
 # -------------------------
@@ -1048,53 +1053,94 @@ def quality_data_entry_page():
             st.error(f"⚠️ Error: {e}")
 
 # -------------------------
-# Dashboard Page (Enhanced with Manufacturing Analytics)
+# Enhanced Dashboard Page with Modern UI
 # -------------------------
 def dashboard_page():
     update_activity()
-    st.header("🏭 Manufacturing Performance Dashboard")
     
-    # Custom CSS for better styling
+    # Enhanced CSS for modern dashboard
     st.markdown("""
     <style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
     .metric-card {
-        background-color: #f8f9fa;
-        padding: 15px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        border: 1px solid #e1e8ed;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        transition: transform 0.2s ease;
+    }
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #2c3e50;
+        margin: 0.5rem 0;
+    }
+    .metric-label {
+        font-size: 0.9rem;
+        color: #7f8c8d;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .progress-bar-container {
+        background: #ecf0f1;
         border-radius: 10px;
-        border-left: 4px solid #4CAF50;
-        margin-bottom: 10px;
-    }
-    .metric-card-warning {
-        border-left: 4px solid #FF9800;
-    }
-    .metric-card-danger {
-        border-left: 4px solid #F44336;
-    }
-    .progress-container {
-        background-color: #e9ecef;
-        border-radius: 5px;
-        margin-top: 5px;
+        height: 8px;
+        margin: 10px 0;
+        overflow: hidden;
     }
     .progress-bar {
-        height: 8px;
-        border-radius: 5px;
-        background-color: #4CAF50;
+        height: 100%;
+        border-radius: 10px;
         transition: width 0.3s ease;
     }
-    .kpi-header {
-        color: #2c3e50;
+    .kpi-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
         font-weight: 600;
-        margin-bottom: 5px;
+        margin-left: 0.5rem;
+    }
+    .badge-excellent { background: #2ecc71; color: white; }
+    .badge-good { background: #3498db; color: white; }
+    .badge-warning { background: #f39c12; color: white; }
+    .badge-poor { background: #e74c3c; color: white; }
+    .section-header {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: #2c3e50;
+        margin: 2rem 0 1rem 0;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid #3498db;
     }
     </style>
     """, unsafe_allow_html=True)
     
-    # Date range filter
-    col1, col2, col3 = st.columns([1, 1, 2])
+    st.markdown('<div class="main-header">🏭 Manufacturing Performance Dashboard</div>', unsafe_allow_html=True)
+    
+    # Date range and filter controls
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
     
     with col1:
-        date_range = st.selectbox("📅 Date Range", 
-                                ["Today", "This Week", "This Month", "Last Week", "Last Month", "Custom Range"])
+        date_range = st.selectbox(
+            "📅 Date Range", 
+            ["Today", "This Week", "This Month", "Last Week", "Last Month", "Custom Range"],
+            key="date_range_select"
+        )
     
     with col2:
         if date_range == "Custom Range":
@@ -1119,193 +1165,192 @@ def dashboard_page():
                 end_date = first_day_this_month - timedelta(days=1)
                 start_date = end_date.replace(day=1)
     
-    # Department filter
-    departments = ["All"] + list(pd.DataFrame(get_all_users())["department"].dropna().unique())
     with col3:
-        department_filter = st.selectbox("🏭 Filter Department", departments)
+        departments = ["All"] + list(pd.DataFrame(get_all_users())["department"].dropna().unique())
+        department_filter = st.selectbox("🏭 Filter Department", departments, key="dept_filter")
     
-    # Fetch production data
+    with col4:
+        st.markdown("##")
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.rerun()
+    
+    # Fetch and calculate data
     records = get_production_metrics(start_date, end_date, department_filter)
     
     if not records:
         st.info("📭 No production records found for the selected period.")
         return
     
-    # Calculate all manufacturing metrics
     metrics = calculate_manufacturing_metrics(records)
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     
-    # Helper functions for visual indicators
-    def get_progress_value(value, max_value=100):
-        return max(0, min(1, value / max_value))
+    # Helper functions for enhanced UI
+    def get_performance_badge(value, metric_type="positive"):
+        """Return performance badge based on value"""
+        if metric_type == "positive":  # Higher is better
+            if value >= 85: return "Excellent", "badge-excellent"
+            elif value >= 70: return "Good", "badge-good"
+            elif value >= 50: return "Fair", "badge-warning"
+            else: return "Poor", "badge-poor"
+        else:  # Lower is better
+            if value <= 5: return "Excellent", "badge-excellent"
+            elif value <= 15: return "Good", "badge-good"
+            elif value <= 25: return "Fair", "badge-warning"
+            else: return "Poor", "badge-poor"
     
-    def get_color_class(value, metric_type="positive"):
-        """Return CSS class based on value and metric type"""
-        if metric_type == "positive":  # Higher is better (OEE, FPY, etc.)
-            if value >= 85: return ""
-            elif value >= 70: return "metric-card-warning"
-            else: return "metric-card-danger"
-        else:  # Lower is better (Scrap, Rework, etc.)
-            if value <= 5: return ""
-            elif value <= 15: return "metric-card-warning"
-            else: return "metric-card-danger"
-    
-    def render_metric_card(title, value, unit="%", progress_value=0, color_class="", help_text=""):
-        """Render a beautiful metric card with progress bar"""
+    def render_enhanced_metric(title, value, unit="%", progress_value=0, metric_type="positive", help_text=""):
+        """Render enhanced metric card with performance badge"""
+        badge_text, badge_class = get_performance_badge(value, metric_type)
+        
+        progress_color = "#2ecc71"  # Green
+        if metric_type == "positive":
+            if value < 50: progress_color = "#e74c3c"
+            elif value < 70: progress_color = "#f39c12"
+            elif value < 85: progress_color = "#3498db"
+        else:
+            if value > 25: progress_color = "#e74c3c"
+            elif value > 15: progress_color = "#f39c12"
+            elif value > 5: progress_color = "#3498db"
+        
         st.markdown(f"""
-        <div class="metric-card {color_class}">
-            <div class="kpi-header">{title}</div>
-            <div style="font-size: 24px; font-weight: bold; color: #2c3e50;">
-                {value}{unit}
+        <div class="metric-card">
+            <div class="metric-label">{title}</div>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div class="metric-value">{value}{unit}</div>
+                <span class="kpi-badge {badge_class}">{badge_text}</span>
             </div>
-            <div class="progress-container">
-                <div class="progress-bar" style="width: {progress_value*100}%;"></div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" style="width: {progress_value*100}%; background: {progress_color};"></div>
             </div>
-            <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">{help_text}</div>
+            <div style="font-size: 0.8rem; color: #7f8c8d;">{help_text}</div>
         </div>
         """, unsafe_allow_html=True)
     
-    # Main KPI Section
-    st.markdown("---")
-    st.subheader("📊 Key Performance Indicators")
+    # Main KPI Section - OEE and Core Metrics
+    st.markdown('<div class="section-header">📊 Overall Equipment Effectiveness (OEE)</div>', unsafe_allow_html=True)
     
-    # Row 1: OEE Components
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        render_metric_card(
+        render_enhanced_metric(
             "Overall OEE", 
             f"{metrics['oee']['oee']:.1f}", 
-            progress_value=get_progress_value(metrics['oee']['oee']),
-            color_class=get_color_class(metrics['oee']['oee'], "positive"),
+            progress_value=metrics['oee']['oee']/100,
             help_text="World-class: 85%+"
         )
     
     with col2:
-        render_metric_card(
+        render_enhanced_metric(
             "Availability", 
             f"{metrics['oee']['availability']:.1f}", 
-            progress_value=get_progress_value(metrics['oee']['availability']),
-            color_class=get_color_class(metrics['oee']['availability'], "positive"),
-            help_text="Production time vs Planned time"
+            progress_value=metrics['oee']['availability']/100,
+            help_text="Production time vs Planned"
         )
     
     with col3:
-        render_metric_card(
+        render_enhanced_metric(
             "Performance", 
             f"{metrics['oee']['performance']:.1f}", 
-            progress_value=get_progress_value(metrics['oee']['performance']),
-            color_class=get_color_class(metrics['oee']['performance'], "positive"),
-            help_text="Actual output vs Planned output"
+            progress_value=metrics['oee']['performance']/100,
+            help_text="Actual vs Planned output"
         )
     
     with col4:
-        render_metric_card(
+        render_enhanced_metric(
             "Quality", 
             f"{metrics['oee']['quality']:.1f}", 
-            progress_value=get_progress_value(metrics['oee']['quality']),
-            color_class=get_color_class(metrics['oee']['quality'], "positive"),
+            progress_value=metrics['oee']['quality']/100,
             help_text="Good units vs Total units"
         )
     
-    # Row 2: Quality Metrics
+    # Quality Metrics Section
+    st.markdown('<div class="section-header">🎯 Quality Performance</div>', unsafe_allow_html=True)
+    
     col5, col6, col7, col8 = st.columns(4)
     
     with col5:
-        render_metric_card(
+        render_enhanced_metric(
             "First Pass Yield", 
             f"{metrics['first_pass_yield']:.1f}", 
-            progress_value=get_progress_value(metrics['first_pass_yield']),
-            color_class=get_color_class(metrics['first_pass_yield'], "positive"),
-            help_text="Units passing quality first time"
+            progress_value=metrics['first_pass_yield']/100,
+            help_text="Units passing first inspection"
         )
     
     with col6:
-        # For scrap rate, we want to show inverse progress (lower is better)
-        scrap_progress = 1 - get_progress_value(metrics['scrap_rate'])
-        render_metric_card(
+        render_enhanced_metric(
             "Scrap Rate", 
             f"{metrics['scrap_rate']:.1f}", 
-            progress_value=scrap_progress,
-            color_class=get_color_class(metrics['scrap_rate'], "negative"),
+            progress_value=1-(metrics['scrap_rate']/100),
+            metric_type="negative",
             help_text="Lower is better"
         )
     
     with col7:
-        # For rework rate, we want to show inverse progress (lower is better)
-        rework_progress = 1 - get_progress_value(metrics['rework_rate'])
-        render_metric_card(
+        render_enhanced_metric(
             "Rework Rate", 
             f"{metrics['rework_rate']:.1f}", 
-            progress_value=rework_progress,
-            color_class=get_color_class(metrics['rework_rate'], "negative"),
+            progress_value=1-(metrics['rework_rate']/100),
+            metric_type="negative",
             help_text="Lower is better"
         )
     
     with col8:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="kpi-header">Cost of Poor Quality</div>
-            <div style="font-size: 24px; font-weight: bold; color: #2c3e50;">
-                ${metrics['cost_of_poor_quality']:,.0f}
-            </div>
-            <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">Financial impact of quality issues</div>
+            <div class="metric-label">Cost of Poor Quality</div>
+            <div class="metric-value">${metrics['cost_of_poor_quality']:,.0f}</div>
+            <div style="font-size: 0.8rem; color: #7f8c8d;">Financial impact of quality issues</div>
         </div>
         """, unsafe_allow_html=True)
     
-    # Row 3: Time & Efficiency Metrics
+    # Efficiency Metrics Section
+    st.markdown('<div class="section-header">⚡ Efficiency Metrics</div>', unsafe_allow_html=True)
+    
     col9, col10, col11, col12 = st.columns(4)
     
     with col9:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="kpi-header">Takt Time</div>
-            <div style="font-size: 24px; font-weight: bold; color: #2c3e50;">
-                {metrics['takt_time']:.1f} min
-            </div>
-            <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">Available time / Customer demand</div>
+            <div class="metric-label">Takt Time</div>
+            <div class="metric-value">{metrics['takt_time']:.1f} min</div>
+            <div style="font-size: 0.8rem; color: #7f8c8d;">Customer demand rate</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col10:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="kpi-header">Cycle Time</div>
-            <div style="font-size: 24px; font-weight: bold; color: #2c3e50;">
-                {metrics['avg_cycle_time']:.1f} min
-            </div>
-            <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">Average time per unit</div>
+            <div class="metric-label">Cycle Time</div>
+            <div class="metric-value">{metrics['avg_cycle_time']:.1f} min</div>
+            <div style="font-size: 0.8rem; color: #7f8c8d;">Average per unit</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col11:
-        render_metric_card(
+        render_enhanced_metric(
             "Capacity Utilization", 
             f"{metrics['capacity_utilization']:.1f}", 
-            progress_value=get_progress_value(metrics['capacity_utilization']),
-            color_class=get_color_class(metrics['capacity_utilization'], "positive"),
+            progress_value=metrics['capacity_utilization']/100,
             help_text="Optimal: 85-90%"
         )
     
     with col12:
-        render_metric_card(
+        render_enhanced_metric(
             "On-Time Delivery", 
             f"{metrics['on_time_delivery']:.1f}", 
-            progress_value=get_progress_value(metrics['on_time_delivery']),
-            color_class=get_color_class(metrics['on_time_delivery'], "positive"),
-            help_text="Completed vs Ordered units"
+            progress_value=metrics['on_time_delivery']/100,
+            help_text="Completed vs Ordered"
         )
     
-    # Visualizations Section
-    st.markdown("---")
-    st.subheader("📈 Performance Trends & Analytics")
+    # Interactive Visualizations
+    st.markdown('<div class="section-header">📈 Performance Analytics</div>', unsafe_allow_html=True)
     
     # Create tabs for different visualizations
-    viz_tab1, viz_tab2, viz_tab3, viz_tab4 = st.tabs(["OEE Trend", "Production Volume", "Quality Metrics", "Efficiency"])
+    viz_tab1, viz_tab2, viz_tab3 = st.tabs(["OEE Trend Analysis", "Production Volume", "Quality Trends"])
     
     with viz_tab1:
-        # OEE Trend Chart
+        # OEE Trend with Plotly
         daily_data = []
         for day in pd.date_range(start_date, end_date):
             day_records = [r for r in records if pd.to_datetime(r['date']).date() == day.date()]
@@ -1320,65 +1365,95 @@ def dashboard_page():
                 })
         
         if daily_data:
-            trend_df = pd.DataFrame(daily_data).set_index('date')
-            st.area_chart(trend_df[['availability', 'performance', 'quality']], use_container_width=True)
-            st.line_chart(trend_df[['oee']], use_container_width=True)
+            trend_df = pd.DataFrame(daily_data)
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=trend_df['date'], y=trend_df['availability'], 
+                                   mode='lines+markers', name='Availability', line=dict(color='#3498db', width=3)))
+            fig.add_trace(go.Scatter(x=trend_df['date'], y=trend_df['performance'], 
+                                   mode='lines+markers', name='Performance', line=dict(color='#2ecc71', width=3)))
+            fig.add_trace(go.Scatter(x=trend_df['date'], y=trend_df['quality'], 
+                                   mode='lines+markers', name='Quality', line=dict(color='#e74c3c', width=3)))
+            fig.add_trace(go.Scatter(x=trend_df['date'], y=trend_df['oee'], 
+                                   mode='lines+markers', name='OEE', line=dict(color='#9b59b6', width=4, dash='dash')))
+            
+            fig.update_layout(
+                title="OEE Components Trend",
+                xaxis_title="Date",
+                yaxis_title="Percentage (%)",
+                hovermode='x unified',
+                height=400,
+                template="plotly_white"
+            )
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No daily data available for trend analysis")
     
     with viz_tab2:
-        # Production Volume Chart
+        # Production Volume with Plotly
         if not df.empty:
             production_data = df.groupby('date').agg({
                 'production_plan': 'sum',
-                'production_actual': 'sum'
+                'production_actual': 'sum',
+                'good_units': 'sum'
             }).reset_index()
-            production_data = production_data.set_index('date')
-            st.bar_chart(production_data[['production_plan', 'production_actual']], use_container_width=True)
             
-            # Production efficiency
-            production_data['efficiency'] = (production_data['production_actual'] / production_data['production_plan']) * 100
-            st.line_chart(production_data[['efficiency']], use_container_width=True)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=production_data['date'], y=production_data['production_plan'], 
+                               name='Planned', marker_color='#bdc3c7', opacity=0.7))
+            fig.add_trace(go.Bar(x=production_data['date'], y=production_data['production_actual'], 
+                               name='Actual', marker_color='#3498db'))
+            fig.add_trace(go.Scatter(x=production_data['date'], y=production_data['good_units'], 
+                                   mode='lines+markers', name='Good Units', line=dict(color='#2ecc71', width=3)))
+            
+            fig.update_layout(
+                title="Production Volume Analysis",
+                xaxis_title="Date",
+                yaxis_title="Units",
+                barmode='group',
+                height=400,
+                template="plotly_white"
+            )
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No production data available")
     
     with viz_tab3:
-        # Quality Metrics Chart
+        # Quality Trends with Plotly
         if not df.empty:
             quality_data = df.groupby('date').agg({
                 'scrap': 'sum',
                 'rework_units': 'sum',
                 'production_actual': 'sum'
             }).reset_index()
-            quality_data = quality_data.set_index('date')
             quality_data['scrap_rate'] = (quality_data['scrap'] / quality_data['production_actual']) * 100
             quality_data['rework_rate'] = (quality_data['rework_units'] / quality_data['production_actual']) * 100
             
-            st.area_chart(quality_data[['scrap', 'rework_units']], use_container_width=True)
-            st.line_chart(quality_data[['scrap_rate', 'rework_rate']], use_container_width=True)
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            fig.add_trace(go.Bar(x=quality_data['date'], y=quality_data['scrap'], 
+                               name='Scrap Units', marker_color='#e74c3c'), secondary_y=False)
+            fig.add_trace(go.Bar(x=quality_data['date'], y=quality_data['rework_units'], 
+                               name='Rework Units', marker_color='#f39c12'), secondary_y=False)
+            fig.add_trace(go.Scatter(x=quality_data['date'], y=quality_data['scrap_rate'], 
+                                   mode='lines+markers', name='Scrap Rate %', 
+                                   line=dict(color='#c0392b', width=3)), secondary_y=True)
+            
+            fig.update_layout(
+                title="Quality Performance Trends",
+                xaxis_title="Date",
+                height=400,
+                template="plotly_white"
+            )
+            fig.update_yaxes(title_text="Units", secondary_y=False)
+            fig.update_yaxes(title_text="Percentage (%)", secondary_y=True)
+            
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No quality data available")
     
-    with viz_tab4:
-        # Efficiency metrics
-        if not df.empty:
-            efficiency_data = df.groupby('date').agg({
-                'cycle_time_minutes': 'mean',
-                'downtime_hours': 'sum'
-            }).reset_index()
-            efficiency_data = efficiency_data.set_index('date')
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.line_chart(efficiency_data[['cycle_time_minutes']], use_container_width=True)
-            with col2:
-                st.bar_chart(efficiency_data[['downtime_hours']], use_container_width=True)
-        else:
-            st.info("No efficiency data available")
-    
-    # Summary Statistics
-    st.markdown("---")
-    st.subheader("📋 Performance Summary")
+    # Summary Statistics Section
+    st.markdown('<div class="section-header">📋 Performance Summary</div>', unsafe_allow_html=True)
     
     summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
     
@@ -1402,23 +1477,29 @@ def dashboard_page():
         st.metric("Avg Cycle Time", f"{avg_cycle:.1f} min")
         st.metric("Avg Downtime", f"{avg_downtime:.1f} hrs")
     
-    # Raw Data Expandable Section
-    with st.expander("📊 View Detailed Data Table"):
-        display_df = df.sort_values('date', ascending=False)
-        display_df = display_df[['date', 'shift', 'department', 'production_plan', 'production_actual', 
-                               'scrap', 'rework_units', 'cycle_time_minutes', 'downtime_hours']]
-        st.dataframe(display_df, use_container_width=True)
+    # Quick Actions and Export
+    st.markdown("---")
+    action_col1, action_col2, action_col3 = st.columns(3)
     
-    # Export Option
-    if st.button("📥 Export Data to CSV", use_container_width=True):
-        csv = df.to_csv(index=False)
-        st.download_button(
-            label="Download CSV Report",
-            data=csv,
-            file_name=f"production_report_{start_date}_{end_date}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+    with action_col1:
+        if st.button("📥 Export Detailed Report", use_container_width=True):
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="Download CSV Report",
+                data=csv,
+                file_name=f"production_report_{start_date}_{end_date}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+    
+    with action_col2:
+        if st.button("📊 Generate Performance PDF", use_container_width=True):
+            st.info("PDF generation feature coming soon!")
+    
+    with action_col3:
+        if st.button("🔄 Real-time Refresh", use_container_width=True):
+            st.rerun()
+
 # -------------------------
 # Access Request Page
 # -------------------------
