@@ -1186,7 +1186,7 @@ def dashboard_page():
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     
     # Helper functions for enhanced UI
-   def get_performance_badge(value, metric_type="positive"):
+    def get_performance_badge(value, metric_type="positive"):
     """Return performance badge based on value"""
     # Ensure value is numeric for comparison
     try:
