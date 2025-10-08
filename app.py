@@ -1205,7 +1205,7 @@ def dashboard_page():
         elif numeric_value <= 25: return "Fair", "badge-warning"
         else: return "Poor", "badge-poor"
     
- def render_enhanced_metric(title, value, unit="%", progress_value=0, metric_type="positive", help_text=""):
+    def render_enhanced_metric(title, value, unit="%", progress_value=0, metric_type="positive", help_text=""):
     """Render enhanced metric card with performance badge"""
     badge_text, badge_class = get_performance_badge(value, metric_type)
     
