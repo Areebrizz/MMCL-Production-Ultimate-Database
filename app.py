@@ -1185,8 +1185,9 @@ def dashboard_page():
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     
-    # Helper functions for enhanced UI
-    def get_performance_badge(value, metric_type="positive"):
+  # Helper functions for enhanced UI
+
+def get_performance_badge(value, metric_type="positive"):
     """Return performance badge based on value"""
     # Ensure value is numeric for comparison
     try:
@@ -1212,8 +1213,9 @@ def dashboard_page():
             return "Fair", "badge-warning"
         else: 
             return "Poor", "badge-poor"
-    
-    def render_enhanced_metric(title, value, unit="%", progress_value=0, metric_type="positive", help_text=""):
+
+
+def render_enhanced_metric(title, value, unit="%", progress_value=0, metric_type="positive", help_text=""):
     """Render enhanced metric card with performance badge"""
     badge_text, badge_class = get_performance_badge(value, metric_type)
     
@@ -1250,6 +1252,7 @@ def dashboard_page():
         <div style="font-size: 0.8rem; color: #7f8c8d;">{help_text}</div>
     </div>
     """, unsafe_allow_html=True)
+
     
     # Main KPI Section - OEE and Core Metrics
     st.markdown('<div class="section-header">📊 Overall Equipment Effectiveness (OEE)</div>', unsafe_allow_html=True)
