@@ -1186,7 +1186,7 @@ def dashboard_page():
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     
     # Helper functions for enhanced UI
-    def get_performance_badge(value, metric_type="positive"):
+   def get_performance_badge(value, metric_type="positive"):
     """Return performance badge based on value"""
     # Ensure value is numeric for comparison
     try:
@@ -1195,15 +1195,23 @@ def dashboard_page():
         return "N/A", "badge-warning"
     
     if metric_type == "positive":  # Higher is better
-        if numeric_value >= 85: return "Excellent", "badge-excellent"
-        elif numeric_value >= 70: return "Good", "badge-good"
-        elif numeric_value >= 50: return "Fair", "badge-warning"
-        else: return "Poor", "badge-poor"
+        if numeric_value >= 85: 
+            return "Excellent", "badge-excellent"
+        elif numeric_value >= 70: 
+            return "Good", "badge-good"
+        elif numeric_value >= 50: 
+            return "Fair", "badge-warning"
+        else: 
+            return "Poor", "badge-poor"
     else:  # Lower is better
-        if numeric_value <= 5: return "Excellent", "badge-excellent"
-        elif numeric_value <= 15: return "Good", "badge-good"
-        elif numeric_value <= 25: return "Fair", "badge-warning"
-        else: return "Poor", "badge-poor"
+        if numeric_value <= 5: 
+            return "Excellent", "badge-excellent"
+        elif numeric_value <= 15: 
+            return "Good", "badge-good"
+        elif numeric_value <= 25: 
+            return "Fair", "badge-warning"
+        else: 
+            return "Poor", "badge-poor"
     
     def render_enhanced_metric(title, value, unit="%", progress_value=0, metric_type="positive", help_text=""):
     """Render enhanced metric card with performance badge"""
