@@ -820,7 +820,6 @@ def calculate_manufacturing_metrics(records):
     df = pd.DataFrame(records)
     
     # Basic calculations
-    total_shifts = len(records)
     total_planned_hours = sum(record.get('planned_hours', 8) for record in records)
     total_actual_hours = total_planned_hours - sum(record.get('scheduled_downtime_hours', 0) for record in records)
     total_unplanned_downtime = sum(record.get('downtime_hours', 0) for record in records)
@@ -838,27 +837,27 @@ def calculate_manufacturing_metrics(records):
     # 1. OEE (already calculated)
     oee_metrics = calculate_daily_oee(records)
     
-    # 2. Takt Time - FIXED: Use per-shift basis
-    shift_hours = 8  # Standard shift hours
-    available_minutes_per_shift = shift_hours * 60
-    takt_time = available_minutes_per_shift / (total_planned_units / total_shifts) if total_planned_units > 0 else 0
+    # 2. Takt Time
+    available_time = total_actual_hours * 60  # Convert to minutes
+    takt_time = available_time / total_planned_units if total_planned_units > 0 else 0
     
-    # 3. Cycle Time - FIXED: Simple average, don't multiply by units
-    cycle_times = [r.get('cycle_time_minutes', 0) for r in records if r.get('cycle_time_minutes', 0) > 0]
-    avg_cycle_time = sum(cycle_times) / len(cycle_times) if cycle_times else 0
+    # 3. Cycle Time (weighted average)
+    total_cycle_time = sum(record.get('cycle_time_minutes', 0) * record.get('production_actual', 0) 
+                          for record in records)
+    avg_cycle_time = total_cycle_time / total_actual_units if total_actual_units > 0 else 0
     
     # 4. Rework Rate
     rework_rate = (total_rework / total_actual_units) * 100 if total_actual_units > 0 else 0
     
-    # 5. Capacity Utilization - FIXED: Use realistic calculation
-    total_available_minutes = total_planned_hours * 60
-    actual_production_minutes = total_actual_units * avg_cycle_time if avg_cycle_time > 0 else 0
-    capacity_utilization = (actual_production_minutes / total_available_minutes) * 100 if total_available_minutes > 0 else 0
+    # 5. Capacity Utilization
+    total_capacity = total_planned_hours * 60  # Total available minutes
+    utilized_capacity = (total_actual_units * avg_cycle_time) if avg_cycle_time > 0 else 0
+    capacity_utilization = (utilized_capacity / total_capacity) * 100 if total_capacity > 0 else 0
     
     # 6. First Pass Yield (FPY)
     fpy = (total_good_units / total_actual_units) * 100 if total_actual_units > 0 else 0
     
-    # 7. Rolled Throughput Yield (RTY)
+    # 7. Rolled Throughput Yield (RTY) - assuming single process for simplicity
     rty = fpy / 100  # For multi-process, this would be product of individual yields
     
     # 8. Scrap Rate
@@ -869,21 +868,21 @@ def calculate_manufacturing_metrics(records):
     
     # 10. Process Cycle Efficiency (simplified)
     value_added_time = total_actual_units * avg_cycle_time
-    pce = (value_added_time / total_available_minutes) * 100 if total_available_minutes > 0 else 0
+    total_cycle_time = available_time
+    pce = (value_added_time / total_cycle_time) * 100 if total_cycle_time > 0 else 0
     
-    # 11. Cost of Poor Quality - FIXED: More realistic calculation
-    labor_cost_per_hour = 25  # Default
-    material_cost_per_unit = 100  # Default
-    # Only count actual quality costs, not entire production time
-    copq = (total_scrap * material_cost_per_unit) + (total_rework * labor_cost_per_hour * 2)  # Assume 2 hours rework time
+    # 11. Cost of Poor Quality (simplified)
+    labor_cost_per_hour = records[0].get('labor_cost_per_hour', 25) if records else 25
+    material_cost_per_unit = records[0].get('material_cost_per_unit', 100) if records else 100
+    copq = (total_scrap * material_cost_per_unit) + (total_rework * labor_cost_per_hour * (avg_cycle_time/60))
     
     return {
-        'takt_time': round(takt_time, 1),
-        'avg_cycle_time': round(avg_cycle_time, 1),
+        'takt_time': round(takt_time, 2),
+        'avg_cycle_time': round(avg_cycle_time, 2),
         'rework_rate': round(rework_rate, 2),
-        'capacity_utilization': min(round(capacity_utilization, 1), 100),  # Cap at 100%
+        'capacity_utilization': round(capacity_utilization, 2),
         'first_pass_yield': round(fpy, 2),
-        'rolled_throughput_yield': round(rty * 100, 2),
+        'rolled_throughput_yield': round(rty * 100, 2),  # Convert back to percentage
         'scrap_rate': round(scrap_rate, 2),
         'on_time_delivery': round(otd, 2),
         'process_cycle_efficiency': round(pce, 2),
@@ -892,8 +891,7 @@ def calculate_manufacturing_metrics(records):
         'total_units': total_actual_units,
         'good_units': total_good_units,
         'scrap_units': total_scrap,
-        'rework_units': total_rework,
-        'total_shifts': total_shifts
+        'rework_units': total_rework
     }
 
 # -------------------------
