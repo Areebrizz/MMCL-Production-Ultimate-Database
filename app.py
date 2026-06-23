@@ -168,16 +168,17 @@ st.set_page_config(
 # Connect to Supabase
 # -------------------------
 @st.cache_resource
+import os
 def init_connection():
-    try:
-        SUPABASE_URL = st.secrets["SUPABASE_URL"]
-        SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        st.error(f"Failed to connect to Supabase: {str(e)}")
+    SUPABASE_URL = os.environ.get("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
+    SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
+    GOD_ADMIN_PASSWORD = os.environ.get("GOD_ADMIN_PASSWORD") or st.secrets.get("GOD_ADMIN_PASSWORD", "admin123")
+    
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        st.error("Missing Supabase credentials! Please set SUPABASE_URL and SUPABASE_KEY.")
         st.stop()
-
-supabase = init_connection()
+    
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # -------------------------
 # Authentication & Session State
