@@ -305,7 +305,7 @@ def log_audit_event(user_id, action, target_type, target_id, details):
     try:
         audit_data = {
             "user_id": user_id,
-            "username": st.session_state.username,
+            "username": st.session_state.get("username", "system"),
             "action": action,
             "target_type": target_type,
             "target_id": target_id,
@@ -388,8 +388,8 @@ def get_recent_production_records(limit=50):
 
 def get_record_counts():
     try:
-        production_response = supabase.table("production_metrics").select("id", count="exact").execute()
-        quality_response = supabase.table("quality_metrics").select("id", count="exact").execute()
+        production_response = supabase.table("production_metrics").select("*", count="exact").limit(1).execute()
+        quality_response = supabase.table("quality_metrics").select("*", count="exact").limit(1).execute()
         return {
             "production": production_response.count if hasattr(production_response, 'count') else 0,
             "quality": quality_response.count if hasattr(quality_response, 'count') else 0
@@ -558,7 +558,6 @@ def setup_god_admin():
     """Create/update god admin account securely"""
     try:
         existing_admin = get_user(GOD_ADMIN_USERNAME)
-        hashed_password = hash_password(GOD_ADMIN_PASSWORD)
 
         if not existing_admin:
             user_data = {
@@ -576,12 +575,7 @@ def setup_god_admin():
             else:
                 st.warning("God Admin account might already exist.")
         else:
-            if not check_password(GOD_ADMIN_PASSWORD, existing_admin["password_hash"]):
-                response = supabase.table("users").update({
-                    "password_hash": hashed_password
-                }).eq("username", GOD_ADMIN_USERNAME).execute()
-                if response.data:
-                    st.warning("God Admin password updated!")
+            return
     except Exception as e:
         st.error(f"Error setting up God Admin: {str(e)}")
 
