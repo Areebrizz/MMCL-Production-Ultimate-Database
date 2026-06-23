@@ -168,7 +168,7 @@ st.set_page_config(
 # Connect to Supabase
 # -------------------------
 @st.cache_resource
-import os
+
 def init_connection():
     SUPABASE_URL = os.environ.get("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
