@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import json
+import os
 
 # ============================================================
 # REQUIRED SUPABASE SCHEMA CHANGES (run these in SQL editor)
@@ -168,7 +169,6 @@ st.set_page_config(
 # Connect to Supabase
 # -------------------------
 @st.cache_resource
-
 def init_connection():
     SUPABASE_URL = os.environ.get("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
@@ -179,6 +179,9 @@ def init_connection():
         st.stop()
     
     return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Initialize supabase connection (GLOBAL)
+supabase = init_connection()  # ← THIS LINE IS CRITICAL!
 
 # -------------------------
 # Authentication & Session State
